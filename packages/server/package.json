@@ -2,6 +2,7 @@
   "name": "@durak/server",
   "version": "0.0.1",
   "private": true,
+  "type": "module",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
@@ -9,6 +10,7 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
+    "@durak/schema": "file:../schema",
     "@colyseus/monitor": "^0.15.0",
     "@colyseus/schema": "^2.0.0",
     "colyseus": "^0.15.0",

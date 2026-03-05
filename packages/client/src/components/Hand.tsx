@@ -2,7 +2,7 @@ import { CardDisplay } from "./CardDisplay";
 
 interface CardLike {
   suit: string;
-  rank: string;
+  rank: number;
 }
 
 interface HandProps {

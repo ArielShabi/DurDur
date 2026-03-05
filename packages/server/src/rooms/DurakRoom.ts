@@ -1,7 +1,5 @@
 import { Room, Client } from "colyseus";
-import { GameState } from "../schema/GameState.js";
-import { Player } from "../schema/Player.js";
-import { Card } from "../schema/Card.js";
+import { GameState, Player, Card } from "@durak/schema";
 
 const SUITS = ["hearts", "diamonds", "clubs", "spades"] as const;
 const RANKS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14] as const;

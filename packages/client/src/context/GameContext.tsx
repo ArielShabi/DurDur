@@ -7,7 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import * as Colyseus from "colyseus.js";
-import type { GameState } from "../schema/GameState";
+import type { GameState } from "@durak/schema";
 
 const WS_URL = "ws://localhost:2567";
 

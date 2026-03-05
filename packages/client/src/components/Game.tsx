@@ -1,6 +1,9 @@
 import { useGame } from "../context/GameContext";
 import { TrumpCard } from "./TrumpCard";
 import { Hand } from "./Hand";
+import { FaceDownHand } from "./FaceDownHand";
+import { GameTable } from "./GameTable";
+import { AttackStatusDisplay } from "./AttackStatusDisplay";
 
 export function Game() {
   const { room, leave } = useGame();
@@ -8,7 +11,6 @@ export function Game() {
 
   if (!room || !state) return null;
 
-  const playerCount = state.players?.size ?? 0;
   const myPlayer = state.players.get(room.sessionId);
   const myHand = myPlayer
     ? Array.from(myPlayer.hand)
@@ -17,8 +19,17 @@ export function Game() {
     : [];
   const trump = state.trumpCard;
 
+  const otherPlayers = Array.from(state.players.entries()).filter(
+    ([sessionId]) => sessionId !== room.sessionId
+  );
+  const [topPlayer, leftPlayer, rightPlayer] = [
+    otherPlayers[0],
+    otherPlayers[1],
+    otherPlayers[2],
+  ];
+
   return (
-    <section className="space-y-6 max-w-2xl">
+    <section className="space-y-6 max-w-6xl">
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold text-slate-200">Game</h2>
         <button
@@ -30,29 +41,44 @@ export function Game() {
         </button>
       </div>
 
-      <TrumpCard suit={trump?.suit ?? ""} rank={trump?.rank ?? ""} />
-
-      <Hand cards={myHand} label="Your hand" />
-
-      <div>
-        <h3 className="text-slate-400 text-sm font-medium mb-2">Players</h3>
-        <ul className="p-4 rounded-lg bg-slate-800/80 space-y-2">
-          {Array.from(state.players.entries()).map(([sessionId, player]) => (
-            <li
-              key={sessionId}
-              className={`flex items-center gap-2 ${sessionId === room.sessionId ? "text-amber-400 font-medium" : "text-slate-200"}`}
-            >
-              <span>{player.name ?? "Anonymous"}</span>
-              {sessionId === room.sessionId && (
-                <span className="text-xs px-2 py-0.5 rounded bg-amber-500/20 text-amber-400">you</span>
-              )}
-            </li>
-          ))}
-          {playerCount === 0 && (
-            <li className="text-slate-500">No players</li>
-          )}
-        </ul>
-      </div>
+      <GameTable
+        top={
+          topPlayer ? (
+            <FaceDownHand
+              count={topPlayer[1].hand.length}
+              label={topPlayer[1].name ?? "Anonymous"}
+            />
+          ) : (
+            <span className="text-slate-500 text-sm">—</span>
+          )
+        }
+        left={
+          leftPlayer ? (
+            <FaceDownHand
+              count={leftPlayer[1].hand.length}
+              label={leftPlayer[1].name ?? "Anonymous"}
+              orientation="vertical"
+            />
+          ) : (
+            <span className="text-slate-500 text-sm">—</span>
+          )
+        }
+        right={
+          rightPlayer ? (
+            <FaceDownHand
+              count={rightPlayer[1].hand.length}
+              label={rightPlayer[1].name ?? "Anonymous"}
+              orientation="vertical"
+            />
+          ) : (
+            <span className="text-slate-500 text-sm">—</span>
+          )
+        }
+        center={
+         <AttackStatusDisplay attackStatus={state.attackStatus} />
+        }
+        bottom={<Hand cards={myHand} label="Your hand" />}
+      />
     </section>
   );
 }
