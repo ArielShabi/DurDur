@@ -1,0 +1,58 @@
+import { useGame } from "../context/GameContext";
+import { TrumpCard } from "./TrumpCard";
+import { Hand } from "./Hand";
+
+export function Game() {
+  const { room, leave } = useGame();
+  const state = room?.state;
+
+  if (!room || !state) return null;
+
+  const playerCount = state.players?.size ?? 0;
+  const myPlayer = state.players.get(room.sessionId);
+  const myHand = myPlayer
+    ? Array.from(myPlayer.hand)
+        .filter((c) => c != null)
+        .map((c) => ({ suit: c.suit, rank: c.rank }))
+    : [];
+  const trump = state.trumpCard;
+
+  return (
+    <section className="space-y-6 max-w-2xl">
+      <div className="flex items-center justify-between">
+        <h2 className="text-xl font-semibold text-slate-200">Game</h2>
+        <button
+          type="button"
+          onClick={leave}
+          className="px-4 py-2 rounded bg-slate-600 text-slate-200 font-medium hover:bg-slate-500"
+        >
+          Leave
+        </button>
+      </div>
+
+      <TrumpCard suit={trump?.suit ?? ""} rank={trump?.rank ?? ""} />
+
+      <Hand cards={myHand} label="Your hand" />
+
+      <div>
+        <h3 className="text-slate-400 text-sm font-medium mb-2">Players</h3>
+        <ul className="p-4 rounded-lg bg-slate-800/80 space-y-2">
+          {Array.from(state.players.entries()).map(([sessionId, player]) => (
+            <li
+              key={sessionId}
+              className={`flex items-center gap-2 ${sessionId === room.sessionId ? "text-amber-400 font-medium" : "text-slate-200"}`}
+            >
+              <span>{player.name ?? "Anonymous"}</span>
+              {sessionId === room.sessionId && (
+                <span className="text-xs px-2 py-0.5 rounded bg-amber-500/20 text-amber-400">you</span>
+              )}
+            </li>
+          ))}
+          {playerCount === 0 && (
+            <li className="text-slate-500">No players</li>
+          )}
+        </ul>
+      </div>
+    </section>
+  );
+}
