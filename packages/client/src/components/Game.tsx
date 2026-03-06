@@ -1,3 +1,4 @@
+import { useCallback } from "react";
 import { useGame } from "../context/GameContext";
 import { TrumpCard } from "./TrumpCard";
 import { Hand } from "./Hand";
@@ -18,6 +19,30 @@ export function Game() {
         .map((c) => ({ suit: c.suit, rank: c.rank }))
     : [];
   const trump = state.trumpCard;
+
+  const isMyAttack =
+    state.currentPhase === "attacking" &&
+    state.attackStatus.attacker.sessionId === room.sessionId;
+
+  const isMyDefense =
+    state.currentPhase === "defending" &&
+    state.attackStatus.defender.sessionId === room.sessionId;
+
+  const handleCardClick = useCallback(
+    (card: { suit: string; rank: number }) => {
+      if (!isMyAttack) return;
+      room.send("attack", { suit: card.suit, rank: card.rank });
+    },
+    [room, isMyAttack],
+  );
+
+  const handleDefend = useCallback(
+    (card: { suit: string; rank: number }, pairIndex: number) => {
+      if (!isMyDefense) return;
+      room.send("defend", { suit: card.suit, rank: card.rank, pairIndex });
+    },
+    [room, isMyDefense],
+  );
 
   const otherPlayers = Array.from(state.players.entries()).filter(
     ([sessionId]) => sessionId !== room.sessionId
@@ -75,9 +100,25 @@ export function Game() {
           )
         }
         center={
-         <AttackStatusDisplay attackStatus={state.attackStatus} />
+          <AttackStatusDisplay
+            attackStatus={state.attackStatus}
+            onDefend={isMyDefense ? handleDefend : undefined}
+          />
         }
-        bottom={<Hand cards={myHand} label="Your hand" />}
+        bottom={
+          <Hand
+            cards={myHand}
+            label={
+              isMyAttack
+                ? "Your turn — pick a card to attack"
+                : isMyDefense
+                  ? "Drag a card onto an attacking card to defend"
+                  : "Your hand"
+            }
+            onCardClick={isMyAttack ? handleCardClick : undefined}
+            cardsDraggable={isMyDefense}
+          />
+        }
       />
     </section>
   );

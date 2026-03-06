@@ -2,6 +2,9 @@ interface CardDisplayProps {
   suit: string;
   rank: number;
   className?: string;
+  onClick?: () => void;
+  draggable?: boolean;
+  onDragStart?: (e: React.DragEvent) => void;
 }
 
 const SUIT_MAP: Record<string, { symbol: string; color: "red" | "black" }> = {
@@ -31,7 +34,7 @@ function rankToString(rank: number): string {
   return rank.toString();
 }
 
-export function CardDisplay({ suit, rank, className = "" }: CardDisplayProps) {
+export function CardDisplay({ suit, rank, className = "", onClick, draggable, onDragStart }: CardDisplayProps) {
   const isEmpty = !suit && !rank;
   const info = suit ? SUIT_MAP[suit.toLowerCase()] ?? { symbol: "?", color: "black" as const } : null;
   const rankString = rankToString(rank);
@@ -58,9 +61,14 @@ export function CardDisplay({ suit, rank, className = "" }: CardDisplayProps) {
         relative flex flex-col rounded-xl border-2 border-slate-300/90
         bg-white shadow-lg shadow-slate-900/25 w-14 h-20 min-w-[3.5rem]
         transition-transform hover:-translate-y-1 hover:shadow-xl
+        ${onClick ? "cursor-pointer ring-amber-400 hover:ring-2" : ""}
+        ${draggable ? "cursor-grab active:cursor-grabbing" : ""}
         ${className}
       `}
       style={{ fontFamily: "'Libre Baskerville', Georgia, serif" }}
+      onClick={onClick}
+      draggable={draggable}
+      onDragStart={onDragStart}
     >
       {/* Top-left corner */}
       <div className="absolute left-1 top-0.5 flex flex-col items-center leading-tight">

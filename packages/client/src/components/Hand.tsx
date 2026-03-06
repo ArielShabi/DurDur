@@ -9,9 +9,11 @@ interface HandProps {
   cards: CardLike[];
   /** Optional label above the hand */
   label?: string;
+  onCardClick?: (card: CardLike) => void;
+  cardsDraggable?: boolean;
 }
 
-export function Hand({ cards, label }: HandProps) {
+export function Hand({ cards, label, onCardClick, cardsDraggable }: HandProps) {
   return (
     <div>
       {label && (
@@ -22,7 +24,18 @@ export function Hand({ cards, label }: HandProps) {
           <span className="text-slate-500 text-sm">No cards</span>
         ) : (
           cards.map((card, i) => (
-            <CardDisplay key={i} suit={card.suit} rank={card.rank} />
+            <CardDisplay
+              key={i}
+              suit={card.suit}
+              rank={card.rank}
+              onClick={onCardClick ? () => onCardClick(card) : undefined}
+              draggable={cardsDraggable}
+              onDragStart={
+                cardsDraggable
+                  ? (e) => e.dataTransfer.setData("application/json", JSON.stringify(card))
+                  : undefined
+              }
+            />
           ))
         )}
       </div>

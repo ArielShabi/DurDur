@@ -5,6 +5,8 @@ import { AttackStatus } from "./AttackStatus.js";
 
 export class GameState extends Schema {
   @type({ map: Player }) players = new MapSchema<Player>();
+  /** SessionIds in seat order (clockwise). Use for turn order / next attacker. */
+  @type(["string"]) turnOrder = new ArraySchema<string>();
   @type([Card]) deck = new ArraySchema<Card>();
   @type(Card) trumpCard = new Card();
   @type([Card]) table = new ArraySchema<Card>();
