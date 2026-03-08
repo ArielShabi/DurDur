@@ -11,6 +11,7 @@ import * as Colyseus from "colyseus.js";
 import type { GameState } from "@durak/schema";
 
 const WS_URL = import.meta.env.VITE_WS_URL ?? "ws://localhost:2567";
+const HTTP_URL = WS_URL.replace(/^ws/, "http");
 const TOKEN_KEY = "durak_reconnection_token";
 
 type Room = Colyseus.Room<GameState>;
@@ -19,10 +20,12 @@ interface GameContextValue {
   client: Colyseus.Client;
   room: Room | null;
   isConnected: boolean;
+  connectionLost: boolean;
   reconnecting: boolean;
-  /** Increments when room state syncs from server; use as dependency to re-render on state changes. */
+  joining: boolean;
   stateVersion: number;
-  joinOrCreate: (playerName?: string) => Promise<void>;
+  createRoom: (playerName?: string) => Promise<void>;
+  joinRoom: (code: string, playerName?: string) => Promise<void>;
   leave: () => Promise<void>;
   error: string | null;
 }
@@ -35,6 +38,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const [reconnecting, setReconnecting] = useState(
     () => sessionStorage.getItem(TOKEN_KEY) !== null,
   );
+  const [joining, setJoining] = useState(false);
+  const [connectionLost, setConnectionLost] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [stateVersion, setStateVersion] = useState(0);
 
@@ -47,11 +52,27 @@ export function GameProvider({ children }: { children: ReactNode }) {
 
   const attachRoom = useCallback((r: Room) => {
     setRoom(r);
+    setConnectionLost(false);
     sessionStorage.setItem(TOKEN_KEY, r.reconnectionToken);
-    r.onLeave(() => {
+    r.onLeave(async (code) => {
+      if (code === 1000 || code === 4000) {
+        setRoom(null);
+        return;
+      }
+      setConnectionLost(true);
+      const token = sessionStorage.getItem(TOKEN_KEY);
+      if (token) {
+        try {
+          const newRoom = await client.reconnect<GameState>(token);
+          attachRoom(newRoom);
+          return;
+        } catch { /* reconnect failed */ }
+      }
+      sessionStorage.removeItem(TOKEN_KEY);
       setRoom(null);
+      setConnectionLost(false);
     });
-  }, []);
+  }, [client]);
 
   const reconnectAttempted = useRef(false);
   useEffect(() => {
@@ -73,18 +94,47 @@ export function GameProvider({ children }: { children: ReactNode }) {
       });
   }, [client, attachRoom]);
 
-  const joinOrCreate = useCallback(
+  const createRoom = useCallback(
     async (playerName?: string) => {
       setError(null);
+      setJoining(true);
       try {
-        const r = await client.joinOrCreate<GameState>("durak", {
+        const r = await client.create<GameState>("durak", {
           name: playerName ?? "Player",
         });
         attachRoom(r);
       } catch (e) {
-        const message =
-          e instanceof Error ? e.message : "Failed to join room";
-        setError(message);
+        setError(e instanceof Error ? e.message : "Failed to create room");
+      } finally {
+        setJoining(false);
+      }
+    },
+    [client, attachRoom],
+  );
+
+  const joinRoom = useCallback(
+    async (code: string, playerName?: string) => {
+      setError(null);
+      setJoining(true);
+      try {
+        const resp = await fetch(
+          `${HTTP_URL}/api/find-room?code=${encodeURIComponent(code.toUpperCase())}`,
+        );
+        if (!resp.ok) {
+          const body = await resp.json().catch(() => ({}));
+          throw new Error(
+            (body as { error?: string }).error ?? "Room not found",
+          );
+        }
+        const { roomId } = (await resp.json()) as { roomId: string };
+        const r = await client.joinById<GameState>(roomId, {
+          name: playerName ?? "Player",
+        });
+        attachRoom(r);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to join room");
+      } finally {
+        setJoining(false);
       }
     },
     [client, attachRoom],
@@ -101,10 +151,13 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const value: GameContextValue = {
     client,
     room,
-    isConnected: true,
+    isConnected: room !== null,
+    connectionLost,
     reconnecting,
+    joining,
     stateVersion,
-    joinOrCreate,
+    createRoom,
+    joinRoom,
     leave,
     error,
   };

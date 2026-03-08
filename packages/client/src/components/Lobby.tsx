@@ -1,22 +1,31 @@
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { useGame } from "../context/GameContext";
 
 export function Lobby() {
   const { room, leave } = useGame();
   const state = room?.state;
+  const [copied, setCopied] = useState(false);
 
   if (!room || !state) return null;
 
   const playerCount = state.players?.size ?? 0;
   const isHost = room.sessionId === state.hostSessionId;
   const canStart = isHost && playerCount >= 2;
+  const roomCode = state.roomCode;
 
   const handleStart = useCallback(() => {
     room.send("startGame");
   }, [room]);
 
+  const handleCopyCode = useCallback(async () => {
+    const url = `${window.location.origin}${window.location.pathname}?code=${roomCode}`;
+    await navigator.clipboard.writeText(url);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }, [roomCode]);
+
   return (
-    <section className="space-y-6 max-w-2xl">
+    <section className="space-y-6 max-w-2xl mx-auto">
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold text-slate-200">Lobby</h2>
         <button
@@ -28,21 +37,34 @@ export function Lobby() {
         </button>
       </div>
 
+      {roomCode && (
+        <div className="p-4 rounded-lg bg-slate-800/80 text-center space-y-2">
+          <span className="text-slate-400 text-sm">Room Code</span>
+          <p className="text-3xl font-bold font-mono tracking-[0.3em] text-amber-400">
+            {roomCode}
+          </p>
+          <button
+            type="button"
+            onClick={handleCopyCode}
+            className="text-sm px-3 py-1 rounded bg-slate-700 text-slate-300 hover:bg-slate-600 transition-colors"
+          >
+            {copied ? "Link copied!" : "Copy invite link"}
+          </button>
+        </div>
+      )}
+
       <p className="text-slate-400 text-sm">
         {isHost
           ? playerCount < 2
-            ? "Waiting for at least one more player to join..."
+            ? "Share the room code with your friends and wait for them to join."
             : "Ready! Press Start Game when everyone is in."
           : "Waiting for the host to start the game..."}
       </p>
 
-      <div className="p-4 rounded-lg bg-slate-800/80 text-sm">
-        <span className="text-slate-400">Players</span>
-        <p className="text-xl font-semibold text-amber-400">{playerCount}</p>
-      </div>
-
       <div>
-        <h3 className="text-slate-400 text-sm font-medium mb-2">Players in room</h3>
+        <h3 className="text-slate-400 text-sm font-medium mb-2">
+          Players ({playerCount})
+        </h3>
         <ul className="p-4 rounded-lg bg-slate-800/80 space-y-2">
           {Array.from(state.players.entries()).map(([sessionId, player]) => (
             <li
@@ -51,10 +73,14 @@ export function Lobby() {
             >
               <span>{player.name ?? "Anonymous"}</span>
               {sessionId === state.hostSessionId && (
-                <span className="text-xs px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400">host</span>
+                <span className="text-xs px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400">
+                  host
+                </span>
               )}
               {sessionId === room.sessionId && (
-                <span className="text-xs px-2 py-0.5 rounded bg-amber-500/20 text-amber-400">you</span>
+                <span className="text-xs px-2 py-0.5 rounded bg-amber-500/20 text-amber-400">
+                  you
+                </span>
               )}
             </li>
           ))}

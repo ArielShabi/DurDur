@@ -15,4 +15,5 @@ export class GameState extends Schema {
   @type(["string"]) passedPlayers = new ArraySchema<string>();
   @type("string") hostSessionId: string = "";
   @type("string") durakSessionId: string = "";
+  @type("string") roomCode: string = "";
 }

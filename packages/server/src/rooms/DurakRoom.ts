@@ -1,16 +1,31 @@
-import { Room, Client } from "@colyseus/core";
+import { Room, Client, type Delayed } from "@colyseus/core";
 import { GameState, Player, Card, CardPair } from "@durak/schema";
 
 const SUITS = ["hearts", "diamonds", "clubs", "spades"] as const;
 const RANKS = [9, 10, 11, 12, 13, 14] as const;
 // const RANKS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14] as const;
 const MIN_PLAYERS_TO_START = 2;
+const DISCONNECT_TURN_TIMEOUT_MS = 30_000;
+
+function generateRoomCode(): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  let code = "";
+  for (let i = 0; i < 4; i++) {
+    code += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return code;
+}
 
 export class DurakRoom extends Room<GameState> {
   maxClients = 6;
+  private disconnectTimers = new Map<string, Delayed>();
 
   onCreate(_options: Record<string, unknown>) {
     this.setState(new GameState());
+
+    const roomCode = generateRoomCode();
+    this.state.roomCode = roomCode;
+    this.setMetadata({ roomCode });
 
     this.onMessage("attack", (client, message: { suit: string; rank: number }) => {
       if (this.state.currentPhase !== "attacking") return;
@@ -356,23 +371,142 @@ export class DurakRoom extends Room<GameState> {
     const player = this.state.players.get(client.sessionId);
     if (player) player.isConnected = false;
 
+    this.scheduleDisconnectTimeout(client.sessionId);
+
     try {
       if (consented) throw new Error("consented leave");
       await this.allowReconnection(client, 120);
       if (player) player.isConnected = true;
+      this.clearDisconnectTimeout(client.sessionId);
     } catch {
-      this.state.players.delete(client.sessionId);
-      const idx = this.state.turnOrder.indexOf(client.sessionId);
-      if (idx !== -1) this.state.turnOrder.splice(idx, 1);
-
-      if (
-        client.sessionId === this.state.hostSessionId &&
-        this.state.currentPhase === "waiting"
-      ) {
-        const nextHost = this.state.players.keys().next().value as string | undefined;
-        this.state.hostSessionId = nextHost ?? "";
-      }
+      this.clearDisconnectTimeout(client.sessionId);
+      this.removePlayer(client.sessionId);
     }
+  }
+
+  private scheduleDisconnectTimeout(sessionId: string): void {
+    this.clearDisconnectTimeout(sessionId);
+
+    const phase = this.state.currentPhase;
+    if (phase !== "attacking" && phase !== "defending") return;
+
+    const { attackStatus } = this.state;
+    const isAttacker = sessionId === attackStatus.attacker.sessionId;
+    const isDefender = sessionId === attackStatus.defender.sessionId;
+
+    if (phase === "defending" && !isAttacker && !isDefender) {
+      if (this.state.passedPlayers.indexOf(sessionId) === -1) {
+        this.state.passedPlayers.push(sessionId);
+        this.checkDefenseSuccess();
+      }
+      return;
+    }
+
+    if (!isAttacker && !isDefender) return;
+
+    const timer = this.clock.setTimeout(() => {
+      this.disconnectTimers.delete(sessionId);
+      this.autoResolveTurn(sessionId);
+    }, DISCONNECT_TURN_TIMEOUT_MS);
+
+    this.disconnectTimers.set(sessionId, timer);
+  }
+
+  private clearDisconnectTimeout(sessionId: string): void {
+    const timer = this.disconnectTimers.get(sessionId);
+    if (timer) {
+      timer.clear();
+      this.disconnectTimers.delete(sessionId);
+    }
+  }
+
+  private autoResolveTurn(sessionId: string): void {
+    const { attackStatus } = this.state;
+
+    if (this.state.currentPhase === "attacking" && sessionId === attackStatus.attacker.sessionId) {
+      const nextAttacker = this.getNextPlayerInTurnOrder(attackStatus.defender.sessionId);
+      if (nextAttacker) this.playTurn(nextAttacker);
+      return;
+    }
+
+    if (this.state.currentPhase === "defending" && sessionId === attackStatus.defender.sessionId) {
+      const defender = this.state.players.get(sessionId);
+      if (!defender) return;
+
+      for (const pair of attackStatus.pairs) {
+        const atk = new Card();
+        atk.suit = pair.attackingCard.suit;
+        atk.rank = pair.attackingCard.rank;
+        defender.hand.push(atk);
+        if (pair.defendingCard.suit !== "" || pair.defendingCard.rank !== 0) {
+          const def = new Card();
+          def.suit = pair.defendingCard.suit;
+          def.rank = pair.defendingCard.rank;
+          defender.hand.push(def);
+        }
+      }
+
+      this.refillHands();
+      this.removeFinishedPlayers();
+
+      if (this.state.turnOrder.length <= 1) {
+        this.finishGame();
+        return;
+      }
+
+      const nextAttacker = this.getNextPlayerInTurnOrder(attackStatus.defender.sessionId);
+      if (nextAttacker) this.playTurn(nextAttacker);
+    }
+  }
+
+  private removePlayer(sessionId: string): void {
+    this.state.players.delete(sessionId);
+    const idx = this.state.turnOrder.indexOf(sessionId);
+    if (idx !== -1) this.state.turnOrder.splice(idx, 1);
+
+    if (sessionId === this.state.hostSessionId) {
+      const nextHost = this.state.players.keys().next().value as string | undefined;
+      this.state.hostSessionId = nextHost ?? "";
+    }
+
+    const phase = this.state.currentPhase;
+    if (phase !== "attacking" && phase !== "defending") return;
+    if (this.state.turnOrder.length <= 1) {
+      this.finishGame();
+      return;
+    }
+
+    const { attackStatus } = this.state;
+    const wasAttacker = sessionId === attackStatus.attacker.sessionId;
+    const wasDefender = sessionId === attackStatus.defender.sessionId;
+
+    if (wasAttacker && phase === "attacking") {
+      const nextId = this.state.turnOrder.at(0);
+      if (nextId) {
+        const next = this.state.players.get(nextId);
+        if (next) this.playTurn(next);
+      }
+      return;
+    }
+
+    if (wasDefender) {
+      this.refillHands();
+      this.removeFinishedPlayers();
+      if (this.state.turnOrder.length <= 1) {
+        this.finishGame();
+        return;
+      }
+      const attacker = this.state.players.get(attackStatus.attacker.sessionId);
+      if (attacker) {
+        const next = this.getNextPlayerInTurnOrder(attacker.sessionId);
+        if (next) this.playTurn(next);
+      }
+      return;
+    }
+
+    const passIdx = this.state.passedPlayers.indexOf(sessionId);
+    if (passIdx !== -1) this.state.passedPlayers.splice(passIdx, 1);
+    this.checkDefenseSuccess();
   }
 
   finishGame(): void {
