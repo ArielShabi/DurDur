@@ -3,8 +3,8 @@ import { GameState, Player, Card, CardPair } from "@durak/schema";
 import { defenceMessages, failedDefenceMessages } from "../MessageConsts.js";
 
 const SUITS = ["hearts", "diamonds", "clubs", "spades"] as const;
-const RANKS = [9, 10, 11, 12, 13, 14] as const;
-// const RANKS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14] as const;
+// const RANKS = [9, 10, 11, 12, 13, 14] as const;
+const RANKS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14] as const;
 const MIN_PLAYERS_TO_START = 2;
 const DISCONNECT_TURN_TIMEOUT_MS = 30_000;
 
