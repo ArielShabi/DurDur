@@ -6,10 +6,22 @@ import { Hand } from "./Hand";
 import { FaceDownHand } from "./FaceDownHand";
 import { GameTable } from "./GameTable";
 import { AttackStatusDisplay } from "./AttackStatusDisplay";
+import { GameAnnouncement } from "./GameAnnouncement";
 
 export function Game() {
   const { room, leave } = useGame();
   const state = room?.state;
+
+  const [announcement, setAnnouncement] = useState<{ message: string; id: number } | null>(null);
+  const announcementSeq = useRef(0);
+
+  useEffect(() => {
+    if (!room) return;
+    return room.onMessage("announcement", (data: { message: string }) => {
+      announcementSeq.current += 1;
+      setAnnouncement({ message: data.message, id: announcementSeq.current });
+    });
+  }, [room]);
 
   if (!room || !state) return null;
 
@@ -180,6 +192,7 @@ export function Game() {
 
   return (
     <section className="space-y-6 max-w-6xl">
+      <GameAnnouncement announcement={announcement} />
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold text-slate-200">Game</h2>
         <button

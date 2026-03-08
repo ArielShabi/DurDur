@@ -16,3 +16,46 @@
 .animate-deal-in {
   animation: deal-in 0.3s ease-out;
 }
+
+@keyframes announcement-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.8) translateY(10px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes announcement-out {
+  0% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.9) translateY(-10px);
+  }
+}
+
+.announcement {
+  padding: 0.75rem 1.75rem;
+  border-radius: 0.75rem;
+  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid rgba(251, 191, 36, 0.4);
+  color: #fbbf24;
+  font-size: 1.125rem;
+  font-weight: 600;
+  text-align: center;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  max-width: 28rem;
+}
+
+.announcement-enter {
+  animation: announcement-in 0.35s ease-out forwards;
+}
+
+.announcement-exit {
+  animation: announcement-out 0.3s ease-in forwards;
+}

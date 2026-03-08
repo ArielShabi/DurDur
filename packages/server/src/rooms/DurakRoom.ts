@@ -123,6 +123,8 @@ export class DurakRoom extends Room<GameState> {
       const newDefender = this.getNextPlayerInTurnOrder(attackStatus.defender.sessionId);
       if (!newDefender) return;
 
+      this.announce(`${player.name} deflects to ${newDefender.name}!`);
+
       attackStatus.attacker.assign({
         sessionId: player.sessionId,
         name: player.name,
@@ -141,6 +143,8 @@ export class DurakRoom extends Room<GameState> {
 
       const defender = this.state.players.get(client.sessionId);
       if (!defender) return;
+
+      this.announce(`${defender.name} takes the cards!`);
 
       for (const pair of attackStatus.pairs) {
         const atk = new Card();
@@ -222,6 +226,11 @@ export class DurakRoom extends Room<GameState> {
       (id) => this.state.passedPlayers.indexOf(id) !== -1,
     );
     if (!allPassed) return;
+
+    const defenderPlayer = this.state.players.get(defenderSessionId);
+    if (defenderPlayer) {
+      this.announce(`${defenderPlayer.name} defended successfully!`);
+    }
 
     this.refillHands();
     this.removeFinishedPlayers();
@@ -513,6 +522,13 @@ export class DurakRoom extends Room<GameState> {
     const durakId = this.state.turnOrder.at(0);
     this.state.durakSessionId = durakId ?? "";
     this.state.currentPhase = "finished";
+
+    if (durakId) {
+      const durak = this.state.players.get(durakId);
+      if (durak) {
+        this.announce(`${durak.name} is the Durak!`);
+      }
+    }
   }
 
   resetForNewGame(): void {
@@ -560,6 +576,9 @@ export class DurakRoom extends Room<GameState> {
       player.hand.push(...this.drawCards(6));
     });
 
+    // Check for special swap
+    this.checkSpecialSwap();
+
     this.state.turnOrder.clear();
     for (const id of this.state.players.keys()) {
       this.state.turnOrder.push(id);
@@ -578,6 +597,52 @@ export class DurakRoom extends Room<GameState> {
       }
     } else {
       this.playTurn(this.getFirstPlayer());
+    }
+  }
+
+  checkSpecialSwap(): void {
+    const trumpSuit = this.state.trumpCard.suit;
+    const trumpRank = this.state.trumpCard.rank;
+    if (!trumpSuit) return;
+
+    const SWAP_ACE = 14;
+    const SWAP_TWO = 2;
+
+    let targetRank: number;
+    if (trumpRank === SWAP_TWO) {
+      targetRank = SWAP_ACE;
+    } else if (trumpRank === SWAP_ACE) {
+      targetRank = SWAP_TWO;
+    } else {
+      return;
+    }
+
+    for (const player of this.state.players.values()) {
+      const idx = player.hand.findIndex(
+        (c) => c.suit === trumpSuit && c.rank === targetRank,
+      );
+      if (idx === -1) continue;
+
+      const deckLastIdx = this.state.deck.length - 1;
+      const deckTrump = this.state.deck.at(deckLastIdx);
+      if (!deckTrump) break;
+
+      const playerCard = player.hand.at(idx)!;
+      const oldRank = playerCard.rank;
+
+      playerCard.suit = deckTrump.suit;
+      playerCard.rank = deckTrump.rank;
+
+      deckTrump.suit = trumpSuit;
+      deckTrump.rank = oldRank;
+
+      this.state.trumpCard.rank = oldRank;
+
+      const rankLabel = oldRank === SWAP_ACE ? "A" : "2";
+      this.announce(
+        `Trump Swap! ${player.name} swapped the ${rankLabel} for the trump card`,
+      );
+      break;
     }
   }
 
@@ -649,6 +714,10 @@ export class DurakRoom extends Room<GameState> {
     }
 
     return cards;
+  }
+
+  announce(message: string): void {
+    this.broadcast("announcement", { message });
   }
 
   onDispose() {
