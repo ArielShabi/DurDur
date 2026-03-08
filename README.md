@@ -1,4 +1,4 @@
-# Durak – Real-time multiplayer (boilerplate)
+# Durak
 
 Monorepo for a Colyseus-backed Durak card game: **packages/server** (Node + Express + Colyseus) and **packages/client** (React + Vite + Tailwind).
 
