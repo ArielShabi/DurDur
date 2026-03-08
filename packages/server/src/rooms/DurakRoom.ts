@@ -12,26 +12,33 @@ export class DurakRoom extends Room<GameState> {
     this.setState(new GameState());
 
     this.onMessage("attack", (client, message: { suit: string; rank: number }) => {
-      const { attackStatus } = this.state;
-      if (client.sessionId !== attackStatus.attacker.sessionId) return;
+      if (this.state.currentPhase !== "attacking") return;
+      if (client.sessionId !== this.state.attackStatus.attacker.sessionId) return;
 
       const player = this.state.players.get(client.sessionId);
       if (!player) return;
 
-      const cardIndex = player.hand.findIndex(
-        (c) => c.suit === message.suit && c.rank === message.rank,
-      );
-      if (cardIndex === -1) return;
-
-      const card = player.hand.at(cardIndex);
+      const card = this.removeCardFromHand(player, message.suit, message.rank);
       if (!card) return;
-      const pair = new CardPair();
-      pair.attackingCard.suit = card.suit;
-      pair.attackingCard.rank = card.rank;
-      attackStatus.pairs.push(pair);
 
-      player.hand.splice(cardIndex, 1);
+      this.pushAttackCard(card);
       this.state.currentPhase = "defending";
+    });
+
+    this.onMessage("addAttack", (client, message: { suit: string; rank: number }) => {
+      if (this.state.currentPhase !== "defending") return;
+      if (client.sessionId === this.state.attackStatus.defender.sessionId) return;
+
+      const player = this.state.players.get(client.sessionId);
+      if (!player) return;
+
+      if (!this.canAddAttack(message.rank)) return;
+
+      const card = this.removeCardFromHand(player, message.suit, message.rank);
+      if (!card) return;
+
+      this.pushAttackCard(card);
+      this.state.passedPlayers.clear();
     });
 
     this.onMessage("defend", (client, message: { suit: string; rank: number; pairIndex: number }) => {
@@ -59,6 +66,86 @@ export class DurakRoom extends Room<GameState> {
       pair.defendingCard.suit = card.suit;
       pair.defendingCard.rank = card.rank;
       player.hand.splice(cardIndex, 1);
+
+      this.checkDefenseSuccess();
+    });
+
+    this.onMessage("pass", (client) => {
+      if (this.state.currentPhase !== "defending") return;
+      if (client.sessionId === this.state.attackStatus.defender.sessionId) return;
+
+      const idx = this.state.passedPlayers.indexOf(client.sessionId);
+      if (idx === -1) {
+        this.state.passedPlayers.push(client.sessionId);
+      } else {
+        this.state.passedPlayers.splice(idx, 1);
+      }
+
+      this.checkDefenseSuccess();
+    });
+
+    this.onMessage("deflect", (client, message: { suit: string; rank: number }) => {
+      if (this.state.currentPhase !== "defending") return;
+      const { attackStatus } = this.state;
+      if (client.sessionId !== attackStatus.defender.sessionId) return;
+
+      if (!this.canDeflect(message.rank)) return;
+
+      const player = this.state.players.get(client.sessionId);
+      if (!player) return;
+
+      const card = this.removeCardFromHand(player, message.suit, message.rank);
+      if (!card) return;
+
+      this.pushAttackCard(card);
+
+      const newDefender = this.getNextPlayerInTurnOrder(attackStatus.defender.sessionId);
+      if (!newDefender) return;
+
+      attackStatus.attacker.assign({
+        sessionId: player.sessionId,
+        name: player.name,
+      });
+      attackStatus.defender.assign({
+        sessionId: newDefender.sessionId,
+        name: newDefender.name,
+      });
+      this.state.passedPlayers.clear();
+    });
+
+    this.onMessage("takeCards", (client) => {
+      if (this.state.currentPhase !== "defending") return;
+      const { attackStatus } = this.state;
+      if (client.sessionId !== attackStatus.defender.sessionId) return;
+
+      const defender = this.state.players.get(client.sessionId);
+      if (!defender) return;
+
+      for (const pair of attackStatus.pairs) {
+        const atk = new Card();
+        atk.suit = pair.attackingCard.suit;
+        atk.rank = pair.attackingCard.rank;
+        defender.hand.push(atk);
+
+        if (pair.defendingCard.suit !== "" || pair.defendingCard.rank !== 0) {
+          const def = new Card();
+          def.suit = pair.defendingCard.suit;
+          def.rank = pair.defendingCard.rank;
+          defender.hand.push(def);
+        }
+      }
+
+      this.refillHands();
+      this.removeFinishedPlayers();
+
+      if (this.state.turnOrder.length <= 1) {
+        this.state.currentPhase = "finished";
+        return;
+      }
+
+      const nextAttacker = this.getNextPlayerInTurnOrder(attackStatus.defender.sessionId);
+      if (!nextAttacker) return;
+      this.playTurn(nextAttacker);
     });
   }
 
@@ -69,6 +156,164 @@ export class DurakRoom extends Room<GameState> {
     return false;
   }
 
+  removeCardFromHand(player: Player, suit: string, rank: number): Card | null {
+    const idx = player.hand.findIndex((c) => c.suit === suit && c.rank === rank);
+    if (idx === -1) return null;
+    const card = player.hand.at(idx);
+    if (!card) return null;
+    player.hand.splice(idx, 1);
+    return card;
+  }
+
+  pushAttackCard(card: Card): void {
+    const pair = new CardPair();
+    pair.attackingCard.suit = card.suit;
+    pair.attackingCard.rank = card.rank;
+    this.state.attackStatus.pairs.push(pair);
+  }
+  checkDefenseSuccess(): void {
+    if (this.state.currentPhase !== "defending") return;
+    if (this.undefendedCount() > 0) return;
+
+    const defenderSessionId = this.state.attackStatus.defender.sessionId;
+    const nonDefenders = Array.from(this.state.turnOrder).filter(
+      (id): id is string => id !== undefined && id !== defenderSessionId,
+    );
+    const allPassed = nonDefenders.every(
+      (id) => this.state.passedPlayers.indexOf(id) !== -1,
+    );
+    if (!allPassed) return;
+
+    this.refillHands();
+    this.removeFinishedPlayers();
+
+    this.state.attackStatus.pairs.clear();
+    this.state.passedPlayers.clear();
+
+    if (this.state.turnOrder.length <= 1) {
+      this.state.currentPhase = "finished";
+      return;
+    }
+
+    const defender = this.state.players.get(defenderSessionId);
+    if (defender && defender.isPlaying) {
+      this.playTurn(defender);
+      return;
+    }
+
+    const attackerId = this.state.attackStatus.attacker.sessionId;
+    const attacker = this.state.players.get(attackerId);
+    if (attacker && attacker.isPlaying) {
+      const next = this.getNextPlayerInTurnOrder(attackerId);
+      if (next) this.playTurn(next);
+      return;
+    }
+
+    const firstId = this.state.turnOrder.at(0);
+    if (firstId) {
+      const first = this.state.players.get(firstId);
+      if (first) this.playTurn(first);
+    }
+  }
+
+  refillHands(): void {
+    if (this.state.deck.length === 0) return;
+
+    const attackerIdx = this.state.turnOrder.indexOf(
+      this.state.attackStatus.attacker.sessionId,
+    );
+    if (attackerIdx === -1) return;
+
+    const len = this.state.turnOrder.length;
+    for (let i = 0; i < len; i++) {
+      const id = this.state.turnOrder.at((attackerIdx - i + len) % len);
+      if (!id) continue;
+      const player = this.state.players.get(id);
+      if (!player) continue;
+
+      const need = 6 - player.hand.length;
+      if (need > 0) {
+        player.hand.push(...this.drawCards(need));
+      }
+      if (this.state.deck.length === 0) break;
+    }
+  }
+
+  removeFinishedPlayers(): void {
+    if (this.state.deck.length > 0) return;
+
+    const toRemove: string[] = [];
+    for (const id of this.state.turnOrder) {
+      if (!id) continue;
+      const player = this.state.players.get(id);
+      if (!player) continue;
+      if (player.hand.length === 0) {
+        player.isPlaying = false;
+        toRemove.push(id);
+      }
+    }
+
+    for (const id of toRemove) {
+      const idx = this.state.turnOrder.indexOf(id);
+      if (idx !== -1) this.state.turnOrder.splice(idx, 1);
+    }
+  }
+
+  /** Ranks of all cards currently visible on the table (both attacking and defending). */
+  getTableRanks(): Set<number> {
+    const ranks = new Set<number>();
+    for (const pair of this.state.attackStatus.pairs) {
+      ranks.add(pair.attackingCard.rank);
+      if (pair.defendingCard.suit !== "" || pair.defendingCard.rank !== 0) {
+        ranks.add(pair.defendingCard.rank);
+      }
+    }
+    return ranks;
+  }
+
+  /** Number of attacks that the defender still needs to beat. */
+  undefendedCount(): number {
+    let count = 0;
+    for (const pair of this.state.attackStatus.pairs) {
+      if (pair.defendingCard.suit === "" && pair.defendingCard.rank === 0) count++;
+    }
+    return count;
+  }
+
+  canDeflect(rank: number): boolean {
+    const { attackStatus } = this.state;
+    if (attackStatus.pairs.length === 0) return false;
+    if (attackStatus.pairs.length >= 6) return false;
+
+    const allSameRank = attackStatus.pairs.every(
+      (p) => p.attackingCard.rank === rank,
+    );
+    if (!allSameRank) return false;
+
+    const anyDefended = attackStatus.pairs.some(
+      (p) => p.defendingCard.suit !== "" || p.defendingCard.rank !== 0,
+    );
+    if (anyDefended) return false;
+
+    const nextDefender = this.getNextPlayerInTurnOrder(attackStatus.defender.sessionId);
+    if (!nextDefender) return false;
+    if (attackStatus.pairs.length + 1 > nextDefender.hand.length) return false;
+
+    return true;
+  }
+
+  canAddAttack(rank: number): boolean {
+    const { attackStatus } = this.state;
+    if (attackStatus.pairs.length >= 6) return false;
+
+    const defender = this.state.players.get(attackStatus.defender.sessionId);
+    if (!defender) return false;
+    if (this.undefendedCount() + 1 > defender.hand.length) return false;
+
+    if (!this.getTableRanks().has(rank)) return false;
+
+    return true;
+  }
 
   onJoin(client: Client, options: { name?: string } = {}) {
     const player = new Player();
@@ -106,12 +351,12 @@ export class DurakRoom extends Room<GameState> {
         this.state.trumpCard.suit = trump.suit;
         this.state.trumpCard.rank = trump.rank;
       }
-      this.state.deck.splice(lastIndex, 1);
     }
 
     this.state.currentPhase = "playing";
 
     this.state.players.forEach((player) => {
+      player.isPlaying = true;
       player.hand.push(...this.drawCards(6));
     });
 
@@ -137,6 +382,7 @@ export class DurakRoom extends Room<GameState> {
       name: defender.name,
     });
     this.state.attackStatus.pairs.clear();
+    this.state.passedPlayers.clear();
     this.state.currentPhase = "attacking";
   }
 

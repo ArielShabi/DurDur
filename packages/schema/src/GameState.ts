@@ -12,4 +12,5 @@ export class GameState extends Schema {
   @type([Card]) table = new ArraySchema<Card>();
   @type("string") currentPhase: string = "waiting";
   @type(AttackStatus) attackStatus = new AttackStatus();
+  @type(["string"]) passedPlayers = new ArraySchema<string>();
 }

@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { useGame } from "../context/GameContext";
 import { TrumpCard } from "./TrumpCard";
+import { DeckPlaceholder } from "./DeckPlaceholder";
 import { Hand } from "./Hand";
 import { FaceDownHand } from "./FaceDownHand";
 import { GameTable } from "./GameTable";
@@ -28,12 +29,18 @@ export function Game() {
     state.currentPhase === "defending" &&
     state.attackStatus.defender.sessionId === room.sessionId;
 
+  const canAddAttack =
+    state.currentPhase === "defending" && !isMyDefense;
+
   const handleCardClick = useCallback(
     (card: { suit: string; rank: number }) => {
-      if (!isMyAttack) return;
-      room.send("attack", { suit: card.suit, rank: card.rank });
+      if (isMyAttack) {
+        room.send("attack", { suit: card.suit, rank: card.rank });
+      } else if (canAddAttack) {
+        room.send("addAttack", { suit: card.suit, rank: card.rank });
+      }
     },
-    [room, isMyAttack],
+    [room, isMyAttack, canAddAttack],
   );
 
   const handleDefend = useCallback(
@@ -43,6 +50,26 @@ export function Game() {
     },
     [room, isMyDefense],
   );
+
+  const handleDeflect = useCallback(
+    (card: { suit: string; rank: number }) => {
+      if (!isMyDefense) return;
+      room.send("deflect", { suit: card.suit, rank: card.rank });
+    },
+    [room, isMyDefense],
+  );
+
+  const handleTakeCards = useCallback(() => {
+    room.send("takeCards");
+  }, [room]);
+
+  const handlePass = useCallback(() => {
+    room.send("pass");
+  }, [room]);
+
+  const hasPassed =
+    canAddAttack &&
+    Array.from(state.passedPlayers).includes(room.sessionId);
 
   const otherPlayers = Array.from(state.players.entries()).filter(
     ([sessionId]) => sessionId !== room.sessionId
@@ -100,24 +127,62 @@ export function Game() {
           )
         }
         center={
-          <AttackStatusDisplay
-            attackStatus={state.attackStatus}
-            onDefend={isMyDefense ? handleDefend : undefined}
-          />
+          <div className="flex items-center gap-6">
+            <div className="flex flex-col items-center gap-2 shrink-0">
+              <DeckPlaceholder count={state.deck.length} />
+              {trump && <TrumpCard suit={trump.suit} rank={trump.rank} />}
+            </div>
+            <AttackStatusDisplay
+              attackStatus={state.attackStatus}
+              onDefend={isMyDefense ? handleDefend : undefined}
+            />
+          </div>
         }
         bottom={
-          <Hand
-            cards={myHand}
-            label={
-              isMyAttack
-                ? "Your turn — pick a card to attack"
-                : isMyDefense
-                  ? "Drag a card onto an attacking card to defend"
-                  : "Your hand"
-            }
-            onCardClick={isMyAttack ? handleCardClick : undefined}
-            cardsDraggable={isMyDefense}
-          />
+          <div className="flex flex-col items-start gap-2">
+            <Hand
+              cards={myHand}
+              label={
+                isMyAttack
+                  ? "Your turn — pick a card to attack"
+                  : isMyDefense
+                    ? "Drag to defend · Click to deflect"
+                    : canAddAttack
+                      ? "Click a card to pile on an attack"
+                      : "Your hand"
+              }
+              onCardClick={
+                isMyAttack || canAddAttack
+                  ? handleCardClick
+                  : isMyDefense
+                    ? handleDeflect
+                    : undefined
+              }
+              cardsDraggable={isMyDefense}
+            />
+            {isMyDefense && (
+              <button
+                type="button"
+                onClick={handleTakeCards}
+                className="px-4 py-2 rounded bg-red-600/80 text-white font-medium hover:bg-red-500 transition-colors"
+              >
+                Take Cards
+              </button>
+            )}
+            {canAddAttack && (
+              <button
+                type="button"
+                onClick={handlePass}
+                className={`px-4 py-2 rounded font-medium transition-colors ${
+                  hasPassed
+                    ? "bg-amber-500 text-white hover:bg-amber-400"
+                    : "bg-slate-600 text-slate-200 hover:bg-slate-500"
+                }`}
+              >
+                {hasPassed ? "Passed — click to unpass" : "Pass"}
+              </button>
+            )}
+          </div>
         }
       />
     </section>

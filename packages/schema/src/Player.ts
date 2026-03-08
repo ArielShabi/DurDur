@@ -6,4 +6,5 @@ export class Player extends Schema {
   @type("string") name: string = "";
   @type("boolean") isConnected: boolean = true;
   @type([Card]) hand = new ArraySchema<Card>();
+  @type("boolean") isPlaying: boolean = false;
 }
