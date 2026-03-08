@@ -2,7 +2,8 @@ import { Room, Client } from "@colyseus/core";
 import { GameState, Player, Card, CardPair } from "@durak/schema";
 
 const SUITS = ["hearts", "diamonds", "clubs", "spades"] as const;
-const RANKS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14] as const;
+const RANKS = [9, 10, 11, 12, 13, 14] as const;
+// const RANKS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14] as const;
 const MIN_PLAYERS_TO_START = 2;
 
 export class DurakRoom extends Room<GameState> {
@@ -319,7 +320,8 @@ export class DurakRoom extends Room<GameState> {
     if (anyDefended) return false;
 
     const nextDefender = this.getNextPlayerInTurnOrder(attackStatus.defender.sessionId);
-    if (!nextDefender) return false;
+    if (!nextDefender) return false;    
+    if (this.state.turnOrder.length <= 2) return false;
     if (attackStatus.pairs.length + 1 > nextDefender.hand.length) return false;
 
     return true;

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useGame } from "../context/GameContext";
 import { TrumpCard } from "./TrumpCard";
 import { DeckPlaceholder } from "./DeckPlaceholder";
@@ -32,15 +32,36 @@ export function Game() {
 
   const [handOrder, setHandOrder] = useState<{ suit: string; rank: number }[]>([]);
 
+  const dealQueueRef = useRef<{ suit: string; rank: number }[]>([]);
+  const dealTimerRef = useRef<number>(0);
+
   const serverHandKey = serverHand.map((c) => `${c.suit}:${c.rank}`).join(",");
   useEffect(() => {
+    clearInterval(dealTimerRef.current);
+    dealQueueRef.current = [];
+
     setHandOrder((prev) => {
       const serverSet = new Set(serverHand.map((c) => `${c.suit}:${c.rank}`));
       const kept = prev.filter((c) => serverSet.has(`${c.suit}:${c.rank}`));
       const keptSet = new Set(kept.map((c) => `${c.suit}:${c.rank}`));
       const added = serverHand.filter((c) => !keptSet.has(`${c.suit}:${c.rank}`));
-      return [...kept, ...added];
+
+      if (added.length <= 1) return [...kept, ...added];
+
+      dealQueueRef.current = added.slice(1);
+      return [...kept, added[0]!];
     });
+
+    dealTimerRef.current = window.setInterval(() => {
+      const card = dealQueueRef.current.shift();
+      if (!card) {
+        clearInterval(dealTimerRef.current);
+        return;
+      }
+      setHandOrder((prev) => [...prev, card]);
+    }, 150);
+
+    return () => clearInterval(dealTimerRef.current);
   }, [serverHandKey]);
 
   const handleReorder = useCallback((fromIndex: number, toIndex: number) => {
@@ -51,6 +72,22 @@ export function Game() {
       next.splice(toIndex, 0, moved);
       return next;
     });
+  }, []);
+
+  const handleSort = useCallback(() => {
+    const suitOrder: Record<string, number> = {
+      hearts: 0,
+      spades: 1,
+      diamonds: 2,
+      clubs: 3,
+    };
+    setHandOrder((prev) =>
+      [...prev].sort((a, b) => {
+        const suitDiff = (suitOrder[a.suit] ?? 9) - (suitOrder[b.suit] ?? 9);
+        if (suitDiff !== 0) return suitDiff;
+        return b.rank - a.rank;
+      }),
+    );
   }, []);
 
   const trump = state.trumpCard;
@@ -230,6 +267,7 @@ export function Game() {
                       : undefined
                 }
                 onReorder={handleReorder}
+                onSort={handleSort}
               />
               {isMyDefense && (
                 <button

@@ -11,9 +11,10 @@ interface HandProps {
   label?: string;
   onCardClick?: (card: CardLike) => void;
   onReorder?: (fromIndex: number, toIndex: number) => void;
+  onSort?: () => void;
 }
 
-export function Hand({ cards, label, onCardClick, onReorder }: HandProps) {
+export function Hand({ cards, label, onCardClick, onReorder, onSort }: HandProps) {
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dropIndex, setDropIndex] = useState<number | null>(null);
 
@@ -45,9 +46,21 @@ export function Hand({ cards, label, onCardClick, onReorder }: HandProps) {
 
   return (
     <div>
-      {label && (
-        <h3 className="text-slate-400 text-sm font-medium mb-2">{label}</h3>
-      )}
+      <div className="flex items-center gap-3 mb-2">
+      {onSort && (
+          <button
+            type="button"
+            onClick={onSort}
+            className="px-2 py-0.5 rounded text-xs font-medium bg-slate-700 text-slate-300 hover:bg-slate-600 transition-colors"
+            title="Sort by suit and rank"
+          >
+            Sort
+          </button>
+        )}
+        {label && (
+          <h3 className="text-slate-400 text-sm font-medium">{label}</h3>
+        )}
+      </div>
       <div className="flex flex-wrap gap-2">
         {cards.length === 0 ? (
           <span className="text-slate-500 text-sm">No cards</span>
@@ -55,7 +68,7 @@ export function Hand({ cards, label, onCardClick, onReorder }: HandProps) {
           cards.map((card, i) => (
             <div
               key={`${card.suit}-${card.rank}`}
-              className={`transition-all duration-150 ${
+              className={`animate-deal-in transition-all duration-150 ${
                 dropIndex === i ? "ring-2 ring-amber-400 rounded-xl scale-105" : ""
               } ${dragIndex === i ? "opacity-30" : ""}`}
               onDragOver={(e) => handleDragOver(e, i)}

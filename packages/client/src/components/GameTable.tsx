@@ -51,7 +51,7 @@ export function GameTable({ left, top, right, center, bottom }: GameTableProps) 
       </div>
 
       <div
-        className="flex justify-center items-center c rounded-xl bg-slate-800/50 border border-slate-700/50 min-w-[10rem] min-h-[8rem]"
+        className="flex justify-center items-center c p-1 rounded-xl bg-slate-800/50 border border-slate-700/50 min-w-[10rem] min-h-[8rem]"
         style={{ gridArea: "center" }}
       >
         {center}
