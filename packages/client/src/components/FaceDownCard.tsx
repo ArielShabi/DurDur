@@ -8,7 +8,7 @@ export function FaceDownCard({ className = "" }: FaceDownCardProps) {
     <div
       className={`
         relative flex items-center justify-center overflow-hidden rounded-xl border-2 border-slate-400/80
-        w-14 h-20 min-w-[3.5rem]
+        w-16 h-24 min-w-[4rem]
         bg-gradient-to-br from-slate-700 to-slate-800 shadow-lg shadow-slate-900/25
         ${className}
       `}

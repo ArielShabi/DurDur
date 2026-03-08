@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useGame } from "../context/GameContext";
 import { TrumpCard } from "./TrumpCard";
 import { DeckPlaceholder } from "./DeckPlaceholder";
@@ -13,13 +13,48 @@ export function Game() {
 
   if (!room || !state) return null;
 
+  const isFinished = state.currentPhase === "finished";
+  const isHost = room.sessionId === state.hostSessionId;
+  const durakPlayer = state.durakSessionId
+    ? state.players.get(state.durakSessionId)
+    : null;
+
+  const handlePlayAgain = useCallback(() => {
+    room.send("playAgain");
+  }, [room]);
+
   const myPlayer = state.players.get(room.sessionId);
-  const myHand = myPlayer
+  const serverHand = myPlayer
     ? Array.from(myPlayer.hand)
         .filter((c) => c != null)
         .map((c) => ({ suit: c.suit, rank: c.rank }))
     : [];
+
+  const [handOrder, setHandOrder] = useState<{ suit: string; rank: number }[]>([]);
+
+  const serverHandKey = serverHand.map((c) => `${c.suit}:${c.rank}`).join(",");
+  useEffect(() => {
+    setHandOrder((prev) => {
+      const serverSet = new Set(serverHand.map((c) => `${c.suit}:${c.rank}`));
+      const kept = prev.filter((c) => serverSet.has(`${c.suit}:${c.rank}`));
+      const keptSet = new Set(kept.map((c) => `${c.suit}:${c.rank}`));
+      const added = serverHand.filter((c) => !keptSet.has(`${c.suit}:${c.rank}`));
+      return [...kept, ...added];
+    });
+  }, [serverHandKey]);
+
+  const handleReorder = useCallback((fromIndex: number, toIndex: number) => {
+    setHandOrder((prev) => {
+      const next = [...prev];
+      const moved = next.splice(fromIndex, 1)[0];
+      if (!moved) return prev;
+      next.splice(toIndex, 0, moved);
+      return next;
+    });
+  }, []);
+
   const trump = state.trumpCard;
+  const hasTrump = trump?.suit && trump?.rank;
 
   const isMyAttack =
     state.currentPhase === "attacking" &&
@@ -119,69 +154,109 @@ export function Game() {
         </button>
       </div>
 
-      <GameTable
-        left={leftNode}
-        top={topNodes}
-        right={rightNode}
-        center={
-          <div className="flex items-center gap-6">
-            <div className="flex flex-col items-center gap-2 shrink-0">
-              <DeckPlaceholder count={state.deck.length} />
-              {trump && <TrumpCard suit={trump.suit} rank={trump.rank} />}
+      {isFinished ? (
+        <div className="flex flex-col items-center gap-4 py-8">
+          <h3 className="text-2xl font-bold text-amber-400">Game Over</h3>
+          {durakPlayer && (
+            <p className="text-lg text-slate-300">
+              <span className="font-semibold text-red-400">
+                {durakPlayer.sessionId === room.sessionId
+                  ? "You"
+                  : durakPlayer.name}
+              </span>{" "}
+              {durakPlayer.sessionId === room.sessionId ? "are" : "is"} the
+              Durak!
+            </p>
+          )}
+          <div className="flex gap-3 mt-2">
+            {isHost && (
+              <button
+                type="button"
+                onClick={handlePlayAgain}
+                className="px-6 py-3 rounded-lg bg-emerald-600 text-white font-semibold text-lg hover:bg-emerald-500 transition-colors"
+              >
+                Play Again
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={leave}
+              className="px-6 py-3 rounded-lg bg-slate-600 text-slate-200 font-semibold text-lg hover:bg-slate-500 transition-colors"
+            >
+              Leave
+            </button>
+          </div>
+          {!isHost && (
+            <p className="text-slate-500 text-sm">
+              Waiting for the host to start a new game...
+            </p>
+          )}
+        </div>
+      ) : (
+        <GameTable
+          left={leftNode}
+          top={topNodes}
+          right={rightNode}
+          center={
+            <div className="flex items-center gap-6">
+              <div className="flex flex-col items-center gap-2 shrink-0">
+                <DeckPlaceholder count={state.deck.length} />
+                {hasTrump && <TrumpCard suit={trump.suit} rank={trump.rank} />}
+              </div>
+              <AttackStatusDisplay
+                attackStatus={state.attackStatus}
+                onDefend={isMyDefense ? handleDefend : undefined}
+              />
             </div>
-            <AttackStatusDisplay
-              attackStatus={state.attackStatus}
-              onDefend={isMyDefense ? handleDefend : undefined}
-            />
-          </div>
-        }
-        bottom={
-          <div className="flex flex-col items-start gap-2">
-            <Hand
-              cards={myHand}
-              label={
-                isMyAttack
-                  ? "Your turn — pick a card to attack"
-                  : isMyDefense
-                    ? "Drag to defend · Click to deflect"
-                    : canAddAttack
-                      ? "Click a card to pile on an attack"
-                      : "Your hand"
-              }
-              onCardClick={
-                isMyAttack || canAddAttack
-                  ? handleCardClick
-                  : isMyDefense
-                    ? handleDeflect
-                    : undefined
-              }
-              cardsDraggable={isMyDefense}
-            />
-            {isMyDefense && (
-              <button
-                type="button"
-                onClick={handleTakeCards}
-                className="px-4 py-2 rounded bg-red-600/80 text-white font-medium hover:bg-red-500 transition-colors"
-              >
-                Take Cards
-              </button>
-            )}
-            {canAddAttack && (
-              <button
-                type="button"
-                onClick={handlePass}
-                className={`px-4 py-2 rounded font-medium transition-colors ${
-                  hasPassed
-                    ? "bg-amber-500 text-white hover:bg-amber-400"
-                    : "bg-slate-600 text-slate-200 hover:bg-slate-500"
-                }`}
-              >
-                {hasPassed ? "Passed — click to unpass" : "Pass"}
-              </button>
-            )}
-          </div>
-        }
-      />
+          }
+          bottom={
+            <div className="flex flex-col items-start gap-2">
+              <Hand
+                cards={handOrder}
+                label={
+                  isMyAttack
+                    ? "Your turn — pick a card to attack"
+                    : isMyDefense
+                      ? "Drag to defend · Click to deflect"
+                      : canAddAttack
+                        ? "Click a card to pile on an attack"
+                        : "Your hand"
+                }
+                onCardClick={
+                  isMyAttack || canAddAttack
+                    ? handleCardClick
+                    : isMyDefense
+                      ? handleDeflect
+                      : undefined
+                }
+                onReorder={handleReorder}
+              />
+              {isMyDefense && (
+                <button
+                  type="button"
+                  onClick={handleTakeCards}
+                  className="px-4 py-2 rounded bg-red-600/80 text-white font-medium hover:bg-red-500 transition-colors"
+                >
+                  Take Cards
+                </button>
+              )}
+              {canAddAttack && (
+                <button
+                  type="button"
+                  onClick={handlePass}
+                  className={`px-4 py-2 rounded font-medium transition-colors ${
+                    hasPassed
+                      ? "bg-amber-500 text-white hover:bg-amber-400"
+                      : "bg-slate-600 text-slate-200 hover:bg-slate-500"
+                  }`}
+                >
+                  {hasPassed ? "Passed — click to unpass" : "Pass"}
+                </button>
+              )}
+            </div>
+          }
+        />
+      )}
     </section>
   );
 }

@@ -3,7 +3,7 @@ import { GameState, Player, Card, CardPair } from "@durak/schema";
 
 const SUITS = ["hearts", "diamonds", "clubs", "spades"] as const;
 const RANKS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14] as const;
-const PLAYERS_TO_START = 4;
+const MIN_PLAYERS_TO_START = 2;
 
 export class DurakRoom extends Room<GameState> {
   maxClients = 6;
@@ -94,10 +94,15 @@ export class DurakRoom extends Room<GameState> {
       const player = this.state.players.get(client.sessionId);
       if (!player) return;
 
-      const card = this.removeCardFromHand(player, message.suit, message.rank);
-      if (!card) return;
+      if ((message.suit === this.state.trumpCard.suit) && (!player.specialDeflectHistory.includes(message.rank))) {
+        player.specialDeflectHistory.push(message.rank);
+      }
+      else {
+        const card = this.removeCardFromHand(player, message.suit, message.rank);
+        if (!card) return;
 
-      this.pushAttackCard(card);
+        this.pushAttackCard(card);
+      }
 
       const newDefender = this.getNextPlayerInTurnOrder(attackStatus.defender.sessionId);
       if (!newDefender) return;
@@ -139,13 +144,31 @@ export class DurakRoom extends Room<GameState> {
       this.removeFinishedPlayers();
 
       if (this.state.turnOrder.length <= 1) {
-        this.state.currentPhase = "finished";
+        this.finishGame();
         return;
       }
 
       const nextAttacker = this.getNextPlayerInTurnOrder(attackStatus.defender.sessionId);
       if (!nextAttacker) return;
       this.playTurn(nextAttacker);
+    });
+
+    this.onMessage("startGame", (client) => {
+      if (this.state.currentPhase !== "waiting") return;
+      if (client.sessionId !== this.state.hostSessionId) return;
+      if (this.state.players.size < MIN_PLAYERS_TO_START) return;
+
+      this.lock();
+      this.startGame();
+    });
+
+    this.onMessage("playAgain", (client) => {
+      if (this.state.currentPhase !== "finished") return;
+      if (client.sessionId !== this.state.hostSessionId) return;
+      if (this.state.players.size < MIN_PLAYERS_TO_START) return;
+
+      this.resetForNewGame();
+      this.startGame();
     });
   }
 
@@ -191,7 +214,7 @@ export class DurakRoom extends Room<GameState> {
     this.state.passedPlayers.clear();
 
     if (this.state.turnOrder.length <= 1) {
-      this.state.currentPhase = "finished";
+      this.finishGame();
       return;
     }
 
@@ -322,8 +345,8 @@ export class DurakRoom extends Room<GameState> {
     player.isConnected = true;
     this.state.players.set(client.sessionId, player);
 
-    if (this.state.players.size === PLAYERS_TO_START) {
-      this.startGame();
+    if (this.state.hostSessionId === "") {
+      this.state.hostSessionId = client.sessionId;
     }
   }
 
@@ -339,7 +362,38 @@ export class DurakRoom extends Room<GameState> {
       this.state.players.delete(client.sessionId);
       const idx = this.state.turnOrder.indexOf(client.sessionId);
       if (idx !== -1) this.state.turnOrder.splice(idx, 1);
+
+      if (
+        client.sessionId === this.state.hostSessionId &&
+        this.state.currentPhase === "waiting"
+      ) {
+        const nextHost = this.state.players.keys().next().value as string | undefined;
+        this.state.hostSessionId = nextHost ?? "";
+      }
     }
+  }
+
+  finishGame(): void {
+    const durakId = this.state.turnOrder.at(0);
+    this.state.durakSessionId = durakId ?? "";
+    this.state.currentPhase = "finished";
+  }
+
+  resetForNewGame(): void {
+    this.state.deck.clear();
+    this.state.table.clear();
+    this.state.turnOrder.clear();
+    this.state.passedPlayers.clear();
+    this.state.attackStatus.pairs.clear();
+    this.state.attackStatus.attacker.assign({ sessionId: "", name: "" });
+    this.state.attackStatus.defender.assign({ sessionId: "", name: "" });
+    this.state.trumpCard.suit = "";
+    this.state.trumpCard.rank = 0;
+
+    this.state.players.forEach((player) => {
+      player.hand.clear();
+      player.isPlaying = false;
+    });
   }
 
   startGame(): void {
@@ -354,7 +408,6 @@ export class DurakRoom extends Room<GameState> {
     }
     this.state.deck.sort(() => Math.random() - 0.5);
 
-    // Set trump from the bottom card (last in deck) and remove it from the deck
     const lastIndex = this.state.deck.length - 1;
     if (lastIndex >= 0) {
       const trump = this.state.deck.at(lastIndex);
@@ -376,8 +429,20 @@ export class DurakRoom extends Room<GameState> {
       this.state.turnOrder.push(id);
     }
 
-    const firstPlayer = this.getFirstPlayer();
-    this.playTurn(firstPlayer);
+    const durak = this.state.durakSessionId
+      ? this.state.players.get(this.state.durakSessionId)
+      : null;
+
+    if (durak) {
+      const attacker = this.getPreviousPlayerInTurnOrder(durak.sessionId);
+      if (attacker) {
+        this.playTurn(attacker);
+      } else {
+        this.playTurn(this.getFirstPlayer());
+      }
+    } else {
+      this.playTurn(this.getFirstPlayer());
+    }
   }
 
   playTurn(attacker: Player): void {
@@ -406,7 +471,17 @@ export class DurakRoom extends Room<GameState> {
     return this.state.players.get(nextId) ?? null;
   }
 
-  
+  getPreviousPlayerInTurnOrder(sessionId: string): Player | null {
+    const len = this.state.turnOrder.length;
+    const index = this.state.turnOrder.indexOf(sessionId);
+    if (index === -1) return null;
+    const prevIndex = (index - 1 + len) % len;
+    const prevId = this.state.turnOrder.at(prevIndex);
+    if (!prevId) return null;
+    return this.state.players.get(prevId) ?? null;
+  }
+
+
   getFirstPlayer(): Player {
     const lowestTrumpCardOfEachPlayer = Array.from(this.state.players.values()).map((player) => {
       return player.hand.reduce((min: number, card: Card) => {
@@ -423,7 +498,7 @@ export class DurakRoom extends Room<GameState> {
   /** Draw one card from the deck. Returns the card or null if deck is empty. */
   drawCard(): Card | null {
     if (this.state.deck.length === 0) return null;
-    return this.state.deck.pop() ?? null;
+    return this.state.deck.shift() ?? null;
   }
 
   drawCards(count: number): Card[] {

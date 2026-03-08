@@ -1,3 +1,4 @@
+import { useCallback } from "react";
 import { useGame } from "../context/GameContext";
 
 export function Lobby() {
@@ -7,7 +8,12 @@ export function Lobby() {
   if (!room || !state) return null;
 
   const playerCount = state.players?.size ?? 0;
-  const phase = state.currentPhase ?? "—";
+  const isHost = room.sessionId === state.hostSessionId;
+  const canStart = isHost && playerCount >= 2;
+
+  const handleStart = useCallback(() => {
+    room.send("startGame");
+  }, [room]);
 
   return (
     <section className="space-y-6 max-w-2xl">
@@ -23,18 +29,16 @@ export function Lobby() {
       </div>
 
       <p className="text-slate-400 text-sm">
-        Waiting for 4 players to start… ({playerCount}/4)
+        {isHost
+          ? playerCount < 2
+            ? "Waiting for at least one more player to join..."
+            : "Ready! Press Start Game when everyone is in."
+          : "Waiting for the host to start the game..."}
       </p>
 
-      <div className="grid grid-cols-2 gap-4 text-sm">
-        <div className="p-4 rounded-lg bg-slate-800/80">
-          <span className="text-slate-400">Players</span>
-          <p className="text-xl font-semibold text-amber-400">{playerCount}</p>
-        </div>
-        <div className="p-4 rounded-lg bg-slate-800/80">
-          <span className="text-slate-400">Phase</span>
-          <p className="text-xl font-semibold capitalize">{phase}</p>
-        </div>
+      <div className="p-4 rounded-lg bg-slate-800/80 text-sm">
+        <span className="text-slate-400">Players</span>
+        <p className="text-xl font-semibold text-amber-400">{playerCount}</p>
       </div>
 
       <div>
@@ -46,6 +50,9 @@ export function Lobby() {
               className={`flex items-center gap-2 ${sessionId === room.sessionId ? "text-amber-400 font-medium" : "text-slate-200"}`}
             >
               <span>{player.name ?? "Anonymous"}</span>
+              {sessionId === state.hostSessionId && (
+                <span className="text-xs px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400">host</span>
+              )}
               {sessionId === room.sessionId && (
                 <span className="text-xs px-2 py-0.5 rounded bg-amber-500/20 text-amber-400">you</span>
               )}
@@ -56,6 +63,21 @@ export function Lobby() {
           )}
         </ul>
       </div>
+
+      {isHost && (
+        <button
+          type="button"
+          onClick={handleStart}
+          disabled={!canStart}
+          className={`w-full px-6 py-3 rounded-lg text-white font-semibold text-lg transition-colors ${
+            canStart
+              ? "bg-emerald-600 hover:bg-emerald-500"
+              : "bg-slate-700 text-slate-500 cursor-not-allowed"
+          }`}
+        >
+          {canStart ? "Start Game" : "Need at least 2 players"}
+        </button>
+      )}
     </section>
   );
 }

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { CardDisplay } from "./CardDisplay";
 
 interface CardLike {
@@ -7,13 +8,41 @@ interface CardLike {
 
 interface HandProps {
   cards: CardLike[];
-  /** Optional label above the hand */
   label?: string;
   onCardClick?: (card: CardLike) => void;
-  cardsDraggable?: boolean;
+  onReorder?: (fromIndex: number, toIndex: number) => void;
 }
 
-export function Hand({ cards, label, onCardClick, cardsDraggable }: HandProps) {  
+export function Hand({ cards, label, onCardClick, onReorder }: HandProps) {
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [dropIndex, setDropIndex] = useState<number | null>(null);
+
+  const handleDragStart = (e: React.DragEvent, index: number, card: CardLike) => {
+    setDragIndex(index);
+    e.dataTransfer.setData("application/json", JSON.stringify(card));
+    e.dataTransfer.effectAllowed = "move";
+  };
+
+  const handleDragOver = (e: React.DragEvent, index: number) => {
+    if (dragIndex === null || dragIndex === index) return;
+    e.preventDefault();
+    setDropIndex(index);
+  };
+
+  const handleDrop = (e: React.DragEvent, toIndex: number) => {
+    e.preventDefault();
+    setDropIndex(null);
+    if (dragIndex !== null && dragIndex !== toIndex) {
+      onReorder?.(dragIndex, toIndex);
+    }
+    setDragIndex(null);
+  };
+
+  const handleDragEnd = () => {
+    setDragIndex(null);
+    setDropIndex(null);
+  };
+
   return (
     <div>
       {label && (
@@ -24,18 +53,24 @@ export function Hand({ cards, label, onCardClick, cardsDraggable }: HandProps) {
           <span className="text-slate-500 text-sm">No cards</span>
         ) : (
           cards.map((card, i) => (
-            <CardDisplay
-              key={i}
-              suit={card.suit}
-              rank={card.rank}
-              onClick={onCardClick ? () => onCardClick(card) : undefined}
-              draggable={cardsDraggable}
-              onDragStart={
-                cardsDraggable
-                  ? (e) => e.dataTransfer.setData("application/json", JSON.stringify(card))
-                  : undefined
-              }
-            />
+            <div
+              key={`${card.suit}-${card.rank}`}
+              className={`transition-all duration-150 ${
+                dropIndex === i ? "ring-2 ring-amber-400 rounded-xl scale-105" : ""
+              } ${dragIndex === i ? "opacity-30" : ""}`}
+              onDragOver={(e) => handleDragOver(e, i)}
+              onDragLeave={() => setDropIndex(null)}
+              onDrop={(e) => handleDrop(e, i)}
+            >
+              <CardDisplay
+                suit={card.suit}
+                rank={card.rank}
+                onClick={onCardClick ? () => onCardClick(card) : undefined}
+                draggable
+                onDragStart={(e) => handleDragStart(e, i, card)}
+                onDragEnd={handleDragEnd}
+              />
+            </div>
           ))
         )}
       </div>

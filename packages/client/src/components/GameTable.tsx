@@ -20,7 +20,7 @@ interface GameTableProps {
 export function GameTable({ left, top, right, center, bottom }: GameTableProps) {
   return (
     <div
-      className="grid w-full max-w-5xl mx-auto gap-4"
+      className="grid w-full max-w-5xl mx-auto gap-y-4 gap-x-10"
       style={{
         gridTemplateColumns: "minmax(100px, 1fr) minmax(10rem, auto) minmax(100px, 1fr)",
         gridTemplateRows: "auto minmax(220px, 1fr) auto",
@@ -44,14 +44,14 @@ export function GameTable({ left, top, right, center, bottom }: GameTableProps) 
       </div>
 
       <div
-        className="flex justify-center items-center min-w-0"
+        className="flex justify-center items-center min-w-0 p-6"
         style={{ gridArea: "left" }}
       >
         {left}
       </div>
 
       <div
-        className="flex justify-center items-center p-6 rounded-xl bg-slate-800/50 border border-slate-700/50 min-w-[10rem] min-h-[8rem]"
+        className="flex justify-center items-center c rounded-xl bg-slate-800/50 border border-slate-700/50 min-w-[10rem] min-h-[8rem]"
         style={{ gridArea: "center" }}
       >
         {center}

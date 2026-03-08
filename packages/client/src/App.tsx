@@ -3,15 +3,12 @@ import { useGame } from "./context/GameContext";
 import { Lobby } from "./components/Lobby";
 import { Game } from "./components/Game";
 
-const PLAYERS_TO_START = 4;
-
 function App() {
   const { room, reconnecting, joinOrCreate, error } = useGame();
   const [playerName, setPlayerName] = useState("");
 
   const state = room?.state;
-  const playerCount = state?.players?.size ?? 0;
-  const showGame = room && playerCount >= PLAYERS_TO_START;
+  const showGame = room && state && state.currentPhase !== "waiting";
 
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 p-6">

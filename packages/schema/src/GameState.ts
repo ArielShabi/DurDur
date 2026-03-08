@@ -13,4 +13,6 @@ export class GameState extends Schema {
   @type("string") currentPhase: string = "waiting";
   @type(AttackStatus) attackStatus = new AttackStatus();
   @type(["string"]) passedPlayers = new ArraySchema<string>();
+  @type("string") hostSessionId: string = "";
+  @type("string") durakSessionId: string = "";
 }
