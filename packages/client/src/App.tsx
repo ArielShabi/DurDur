@@ -6,7 +6,7 @@ import { Game } from "./components/Game";
 const PLAYERS_TO_START = 4;
 
 function App() {
-  const { isConnected, room, connect, joinOrCreate, error } = useGame();
+  const { room, reconnecting, joinOrCreate, error } = useGame();
   const [playerName, setPlayerName] = useState("");
 
   const state = room?.state;
@@ -26,43 +26,27 @@ function App() {
         </div>
       )}
 
-      {!room ? (
-        <>
-          <section className="space-y-4 mb-8">
-            {!isConnected && (
-              <button
-                type="button"
-                onClick={connect}
-                className="px-4 py-2 rounded bg-amber-500 text-slate-900 font-medium hover:bg-amber-400"
-              >
-                Connect
-              </button>
-            )}
-
-            {isConnected && (
-              <div className="flex flex-wrap items-center gap-3">
-                <input
-                  type="text"
-                  placeholder="Your name"
-                  value={playerName}
-                  onChange={(e) => setPlayerName(e.target.value)}
-                  className="px-3 py-2 rounded bg-slate-800 border border-slate-600 text-slate-100 placeholder-slate-500"
-                />
-                <button
-                  type="button"
-                  onClick={() => joinOrCreate(playerName || undefined)}
-                  className="px-4 py-2 rounded bg-emerald-600 text-white font-medium hover:bg-emerald-500"
-                >
-                  Join game
-                </button>
-              </div>
-            )}
-          </section>
-
-          {isConnected && (
-            <p className="text-slate-500 text-sm">Connected. Click &quot;Join game&quot; to enter a room.</p>
-          )}
-        </>
+      {reconnecting ? (
+        <p className="text-slate-400 text-sm">Reconnecting to your game...</p>
+      ) : !room ? (
+        <section className="space-y-4 mb-8">
+          <div className="flex flex-wrap items-center gap-3">
+            <input
+              type="text"
+              placeholder="Your name"
+              value={playerName}
+              onChange={(e) => setPlayerName(e.target.value)}
+              className="px-3 py-2 rounded bg-slate-800 border border-slate-600 text-slate-100 placeholder-slate-500"
+            />
+            <button
+              type="button"
+              onClick={() => joinOrCreate(playerName || undefined)}
+              className="px-4 py-2 rounded bg-emerald-600 text-white font-medium hover:bg-emerald-500"
+            >
+              Join game
+            </button>
+          </div>
+        </section>
       ) : showGame ? (
         <Game />
       ) : (

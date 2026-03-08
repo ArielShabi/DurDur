@@ -327,8 +327,19 @@ export class DurakRoom extends Room<GameState> {
     }
   }
 
-  onLeave(client: Client, _consented: boolean) {
-    this.state.players.delete(client.sessionId);
+  async onLeave(client: Client, consented: boolean) {
+    const player = this.state.players.get(client.sessionId);
+    if (player) player.isConnected = false;
+
+    try {
+      if (consented) throw new Error("consented leave");
+      await this.allowReconnection(client, 120);
+      if (player) player.isConnected = true;
+    } catch {
+      this.state.players.delete(client.sessionId);
+      const idx = this.state.turnOrder.indexOf(client.sessionId);
+      if (idx !== -1) this.state.turnOrder.splice(idx, 1);
+    }
   }
 
   startGame(): void {

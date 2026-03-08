@@ -71,14 +71,40 @@ export function Game() {
     canAddAttack &&
     Array.from(state.passedPlayers).includes(room.sessionId);
 
-  const otherPlayers = Array.from(state.players.entries()).filter(
-    ([sessionId]) => sessionId !== room.sessionId
+  // Build opponents in clockwise seating order starting from the player
+  // to our left (the next seat after ours in turnOrder).
+  const order = Array.from(state.turnOrder).filter((id): id is string => id != null);
+  const myIdx = order.indexOf(room.sessionId);
+  const rotated = myIdx === -1
+    ? order
+    : [...order.slice(myIdx + 1), ...order.slice(0, myIdx)];
+
+  const otherPlayers = rotated
+    .map((id) => [id, state.players.get(id)] as const)
+    .filter((entry): entry is [string, NonNullable<typeof entry[1]>] => entry[1] != null);
+
+  const toNode = ([sessionId, player]: (typeof otherPlayers)[number]) => (
+    <FaceDownHand
+      key={sessionId}
+      count={player.hand.length}
+      label={player.name ?? "Anonymous"}
+    />
   );
-  const [topPlayer, leftPlayer, rightPlayer] = [
-    otherPlayers[0],
-    otherPlayers[1],
-    otherPlayers[2],
-  ];
+
+  // Distribute opponents into left / top / right based on seating order.
+  // Index 0 = immediate left neighbour, last = immediate right neighbour.
+  let leftNode: React.ReactNode | undefined;
+  let rightNode: React.ReactNode | undefined;
+  let topNodes: React.ReactNode[];
+
+  const n = otherPlayers.length;
+  if (n <= 1) {
+    topNodes = otherPlayers.map(toNode);
+  } else {
+    leftNode = toNode(otherPlayers[0]!);
+    rightNode = toNode(otherPlayers[n - 1]!);
+    topNodes = otherPlayers.slice(1, n - 1).map(toNode);
+  }
 
   return (
     <section className="space-y-6 max-w-6xl">
@@ -94,38 +120,9 @@ export function Game() {
       </div>
 
       <GameTable
-        top={
-          topPlayer ? (
-            <FaceDownHand
-              count={topPlayer[1].hand.length}
-              label={topPlayer[1].name ?? "Anonymous"}
-            />
-          ) : (
-            <span className="text-slate-500 text-sm">—</span>
-          )
-        }
-        left={
-          leftPlayer ? (
-            <FaceDownHand
-              count={leftPlayer[1].hand.length}
-              label={leftPlayer[1].name ?? "Anonymous"}
-              orientation="vertical"
-            />
-          ) : (
-            <span className="text-slate-500 text-sm">—</span>
-          )
-        }
-        right={
-          rightPlayer ? (
-            <FaceDownHand
-              count={rightPlayer[1].hand.length}
-              label={rightPlayer[1].name ?? "Anonymous"}
-              orientation="vertical"
-            />
-          ) : (
-            <span className="text-slate-500 text-sm">—</span>
-          )
-        }
+        left={leftNode}
+        top={topNodes}
+        right={rightNode}
         center={
           <div className="flex items-center gap-6">
             <div className="flex flex-col items-center gap-2 shrink-0">

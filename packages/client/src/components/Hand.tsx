@@ -13,7 +13,7 @@ interface HandProps {
   cardsDraggable?: boolean;
 }
 
-export function Hand({ cards, label, onCardClick, cardsDraggable }: HandProps) {
+export function Hand({ cards, label, onCardClick, cardsDraggable }: HandProps) {  
   return (
     <div>
       {label && (
