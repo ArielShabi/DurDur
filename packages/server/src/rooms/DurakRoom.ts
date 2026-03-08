@@ -1,5 +1,6 @@
 import { Room, Client, type Delayed } from "@colyseus/core";
 import { GameState, Player, Card, CardPair } from "@durak/schema";
+import { defenceMessages, failedDefenceMessages } from "../MessageConsts.js";
 
 const SUITS = ["hearts", "diamonds", "clubs", "spades"] as const;
 const RANKS = [9, 10, 11, 12, 13, 14] as const;
@@ -123,7 +124,7 @@ export class DurakRoom extends Room<GameState> {
       const newDefender = this.getNextPlayerInTurnOrder(attackStatus.defender.sessionId);
       if (!newDefender) return;
 
-      this.announce(`${player.name} deflects to ${newDefender.name}!`);
+      this.announce(`${player.name} העביר ל ${newDefender.name}`);
 
       attackStatus.attacker.assign({
         sessionId: player.sessionId,
@@ -144,7 +145,8 @@ export class DurakRoom extends Room<GameState> {
       const defender = this.state.players.get(client.sessionId);
       if (!defender) return;
 
-      this.announce(`${defender.name} takes the cards!`);
+      this.announce(`${defender.name} ${failedDefenceMessages[Math.floor(Math.random() * failedDefenceMessages.length)]}`);
+      
 
       for (const pair of attackStatus.pairs) {
         const atk = new Card();
@@ -229,7 +231,7 @@ export class DurakRoom extends Room<GameState> {
 
     const defenderPlayer = this.state.players.get(defenderSessionId);
     if (defenderPlayer) {
-      this.announce(`${defenderPlayer.name} defended successfully!`);
+      this.announce(`${defenderPlayer.name} ${defenceMessages[Math.floor(Math.random() * defenceMessages.length)]}`);
     }
 
     this.refillHands();
@@ -526,7 +528,7 @@ export class DurakRoom extends Room<GameState> {
     if (durakId) {
       const durak = this.state.players.get(durakId);
       if (durak) {
-        this.announce(`${durak.name} is the Durak!`);
+        this.announce(`${durak.name} הוא הדור על דף ווב`);
       }
     }
   }
@@ -639,8 +641,9 @@ export class DurakRoom extends Room<GameState> {
       this.state.trumpCard.rank = oldRank;
 
       const rankLabel = oldRank === SWAP_ACE ? "A" : "2";
+      
       this.announce(
-        `Trump Swap! ${player.name} swapped the ${rankLabel} for the trump card`,
+        `החלפה! ${player.name} החלף את ה${rankLabel}`
       );
       break;
     }

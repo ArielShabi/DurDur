@@ -26,6 +26,7 @@ export function GameAnnouncement({ announcement, duration = 3000 }: GameAnnounce
   return (
     <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center">
       <div
+        dir="rtl"
         className={`announcement ${visible ? "announcement-enter" : "announcement-exit"}`}
         onAnimationEnd={() => {
           if (!visible) setText(null);
