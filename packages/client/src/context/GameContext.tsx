@@ -10,7 +10,7 @@ import {
 import * as Colyseus from "colyseus.js";
 import type { GameState } from "@durak/schema";
 
-const WS_URL = "ws://localhost:2567";
+const WS_URL = import.meta.env.VITE_WS_URL ?? "ws://localhost:2567";
 const TOKEN_KEY = "durak_reconnection_token";
 
 type Room = Colyseus.Room<GameState>;
