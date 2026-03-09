@@ -1,6 +1,7 @@
 import { Room, Client, type Delayed } from "@colyseus/core";
 import { GameState, Player, Card, CardPair } from "@durak/schema";
 import { defenceMessages, failedDefenceMessages } from "../MessageConsts.js";
+import { AttackErrorReason } from "../consts.js";
 
 const SUITS = ["hearts", "diamonds", "clubs", "spades"] as const;
 // const RANKS = [9, 10, 11, 12, 13, 14] as const;
@@ -38,7 +39,7 @@ export class DurakRoom extends Room<GameState> {
       const card = this.removeCardFromHand(player, message.suit, message.rank);
       if (!card) return;
 
-      this.pushAttackCard(card);
+      this.pushAttackCard(card, client.sessionId);
       this.state.currentPhase = "defending";
     });
 
@@ -49,12 +50,24 @@ export class DurakRoom extends Room<GameState> {
       const player = this.state.players.get(client.sessionId);
       if (!player) return;
 
-      if (!this.canAddAttack(message.rank)) return;
+      const { canAdd, reason } = this.canAddAttack(message.rank);
+      if (!canAdd) {
+        if (
+          client.sessionId === this.state.attackStatus.attacker.sessionId
+          && (
+            reason === AttackErrorReason.PAIRS_FULL
+            || reason === AttackErrorReason.DEFENDER_HAND_FULL
+          )
+        ) {
+          this.trySwapAttack(player, message.suit, message.rank);
+        }
+        return;
+      }
 
       const card = this.removeCardFromHand(player, message.suit, message.rank);
       if (!card) return;
 
-      this.pushAttackCard(card);
+      this.pushAttackCard(card, client.sessionId);
       this.state.passedPlayers.clear();
     });
 
@@ -118,7 +131,7 @@ export class DurakRoom extends Room<GameState> {
         const card = this.removeCardFromHand(player, message.suit, message.rank);
         if (!card) return;
 
-        this.pushAttackCard(card);
+        this.pushAttackCard(card, client.sessionId);
       }
 
       const newDefender = this.getNextPlayerInTurnOrder(attackStatus.defender.sessionId);
@@ -210,12 +223,44 @@ export class DurakRoom extends Room<GameState> {
     return card;
   }
 
-  pushAttackCard(card: Card): void {
+  pushAttackCard(card: Card, playedBy: string): void {
     const pair = new CardPair();
     pair.attackingCard.suit = card.suit;
     pair.attackingCard.rank = card.rank;
+    pair.playedBy = playedBy;
     this.state.attackStatus.pairs.push(pair);
   }
+
+  trySwapAttack(mainAttacker: Player, suit: string, rank: number): void {
+    const { pairs } = this.state.attackStatus;
+
+    for (let i = pairs.length - 1; i >= 0; i--) {
+      const pair = pairs.at(i);
+      if (!pair) continue;
+      if (pair.playedBy === mainAttacker.sessionId) continue;
+      if (pair.defendingCard.suit !== "" || pair.defendingCard.rank !== 0) return;
+
+      const card = this.removeCardFromHand(mainAttacker, suit, rank);
+      if (!card) return;
+
+      const originalPlayer = this.state.players.get(pair.playedBy);
+      if (originalPlayer) {
+        const returnCard = new Card();
+        returnCard.suit = pair.attackingCard.suit;
+        returnCard.rank = pair.attackingCard.rank;
+        originalPlayer.hand.push(returnCard);
+      }
+
+      pair.attackingCard.suit = suit;
+      pair.attackingCard.rank = rank;
+      pair.playedBy = mainAttacker.sessionId;
+
+      this.state.passedPlayers.clear();
+      this.announce(`${mainAttacker.name} החליף קלף בהתקפה`);
+      return;
+    }
+  }
+
   checkDefenseSuccess(): void {
     if (this.state.currentPhase !== "defending") return;
     if (this.undefendedCount() > 0) return;
@@ -353,17 +398,17 @@ export class DurakRoom extends Room<GameState> {
     return true;
   }
 
-  canAddAttack(rank: number): boolean {
+  canAddAttack(rank: number): {canAdd: boolean, reason?: string} {
     const { attackStatus } = this.state;
-    if (attackStatus.pairs.length >= 6) return false;
+    if (attackStatus.pairs.length >= 6) return {canAdd: false, reason: AttackErrorReason.PAIRS_FULL};
 
     const defender = this.state.players.get(attackStatus.defender.sessionId);
-    if (!defender) return false;
-    if (this.undefendedCount() + 1 > defender.hand.length) return false;
+    if (!defender) return {canAdd: false, reason: AttackErrorReason.DEFENDER_NOT_FOUND};
+    if (this.undefendedCount() + 1 > defender.hand.length) return {canAdd: false, reason: AttackErrorReason.DEFENDER_HAND_FULL};
 
-    if (!this.getTableRanks().has(rank)) return false;
+    if (!this.getTableRanks().has(rank)) return {canAdd: false, reason: AttackErrorReason.RANK_NOT_ALLOWED};
 
-    return true;
+    return {canAdd: true, reason: undefined};
   }
 
   onJoin(client: Client, options: { name?: string } = {}) {

@@ -5,4 +5,5 @@ import { Card } from "./Card.js";
 export class CardPair extends Schema {
   @type(Card) attackingCard: Card = new Card();
   @type(Card) defendingCard: Card = new Card();
+  @type("string") playedBy: string = "";
 }
