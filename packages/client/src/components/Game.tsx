@@ -44,6 +44,28 @@ export function Game() {
 
   const [handOrder, setHandOrder] = useState<{ suit: string; rank: number }[]>([]);
 
+  const trumpSuit = state.trumpCard?.suit;
+  const sortCards = useCallback(
+    (cards: { suit: string; rank: number }[]) => {
+      const nonTrumpSuits = ["hearts", "spades", "diamonds", "clubs"].filter(
+        (s) => s !== trumpSuit,
+      );
+      const suitOrder: Record<string, number> = {};
+      nonTrumpSuits.forEach((s, i) => (suitOrder[s] = i));
+      if (trumpSuit) suitOrder[trumpSuit] = nonTrumpSuits.length;
+
+      return [...cards].sort((a, b) => {
+        const suitDiff = (suitOrder[a.suit] ?? 9) - (suitOrder[b.suit] ?? 9);
+        if (suitDiff !== 0) return suitDiff;
+        return a.rank - b.rank;
+      });
+    },
+    [trumpSuit],
+  );
+
+  const [autoSort, setAutoSort] = useState(false);
+  const autoSortRef = useRef(false);
+
   const dealQueueRef = useRef<{ suit: string; rank: number }[]>([]);
   const dealTimerRef = useRef<number>(0);
 
@@ -58,10 +80,14 @@ export function Game() {
       const keptSet = new Set(kept.map((c) => `${c.suit}:${c.rank}`));
       const added = serverHand.filter((c) => !keptSet.has(`${c.suit}:${c.rank}`));
 
-      if (added.length <= 1) return [...kept, ...added];
+      if (added.length <= 1) {
+        const result = [...kept, ...added];
+        return autoSortRef.current ? sortCards(result) : result;
+      }
 
       dealQueueRef.current = added.slice(1);
-      return [...kept, added[0]!];
+      const result = [...kept, added[0]!];
+      return autoSortRef.current ? sortCards(result) : result;
     });
 
     dealTimerRef.current = window.setInterval(() => {
@@ -70,11 +96,14 @@ export function Game() {
         clearInterval(dealTimerRef.current);
         return;
       }
-      setHandOrder((prev) => [...prev, card]);
+      setHandOrder((prev) => {
+        const next = [...prev, card];
+        return autoSortRef.current ? sortCards(next) : next;
+      });
     }, 150);
 
     return () => clearInterval(dealTimerRef.current);
-  }, [serverHandKey]);
+  }, [serverHandKey, sortCards]);
 
   const handleReorder = useCallback((fromIndex: number, toIndex: number) => {
     setHandOrder((prev) => {
@@ -87,20 +116,15 @@ export function Game() {
   }, []);
 
   const handleSort = useCallback(() => {
-    const suitOrder: Record<string, number> = {
-      hearts: 0,
-      spades: 1,
-      diamonds: 2,
-      clubs: 3,
-    };
-    setHandOrder((prev) =>
-      [...prev].sort((a, b) => {
-        const suitDiff = (suitOrder[a.suit] ?? 9) - (suitOrder[b.suit] ?? 9);
-        if (suitDiff !== 0) return suitDiff;
-        return b.rank - a.rank;
-      }),
-    );
-  }, []);
+    setAutoSort((prev) => {
+      const next = !prev;
+      autoSortRef.current = next;
+      if (next) {
+        setHandOrder((h) => sortCards(h));
+      }
+      return next;
+    });
+  }, [sortCards]);
 
   const trump = state.trumpCard;
   const hasTrump = trump?.suit && trump?.rank;
@@ -113,8 +137,15 @@ export function Game() {
     state.currentPhase === "defending" &&
     state.attackStatus.defender.sessionId === room.sessionId;
 
+  const isThrowingIn = state.currentPhase === "throwing-in";
+  const isMyThrowIn =
+    isThrowingIn &&
+    state.attackStatus.defender.sessionId === room.sessionId;
+
   const canAddAttack =
-    state.currentPhase === "defending" && !isMyDefense;
+    (state.currentPhase === "defending" || isThrowingIn) &&
+    !isMyDefense &&
+    !isMyThrowIn;
 
   const handleCardClick = useCallback(
     (card: { suit: string; rank: number }) => {
@@ -191,7 +222,7 @@ export function Game() {
   }
 
   return (
-    <section className="space-y-6 max-w-6xl">
+    <section className="space-y-6 max-w-6xl mx-auto">
       <GameAnnouncement announcement={announcement} />
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold text-slate-200">Game</h2>
@@ -268,9 +299,11 @@ export function Game() {
                     ? "Your turn — pick a card to attack"
                     : isMyDefense
                       ? "Drag to defend · Click to deflect"
-                      : canAddAttack
-                        ? "Click a card to pile on an attack"
-                        : "Your hand"
+                      : isMyThrowIn
+                        ? "Taking cards — waiting for others..."
+                        : canAddAttack
+                          ? "Click a card to pile on"
+                          : "Your hand"
                 }
                 onCardClick={
                   isMyAttack || canAddAttack
@@ -279,14 +312,18 @@ export function Game() {
                       ? handleDeflect
                       : undefined
                 }
-                onReorder={handleReorder}
+                onReorder={autoSort ? undefined : handleReorder}
                 onSort={handleSort}
+                autoSort={autoSort}
               />
               {isMyDefense && (
                 <button
                   type="button"
                   onClick={handleTakeCards}
-                  className="px-4 py-2 rounded bg-red-600/80 text-white font-medium hover:bg-red-500 transition-colors"
+                  disabled={!Array.from(state.attackStatus.pairs ?? []).some(
+                    (p) => p?.attackingCard?.suit && !p?.defendingCard?.suit,
+                  )}
+                  className="px-4 py-2 rounded bg-red-600/80 text-white font-medium hover:bg-red-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-red-600/80"
                 >
                   Take Cards
                 </button>

@@ -8,6 +8,7 @@ const SUITS = ["hearts", "diamonds", "clubs", "spades"] as const;
 const RANKS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14] as const;
 const MIN_PLAYERS_TO_START = 2;
 const DISCONNECT_TURN_TIMEOUT_MS = 30_000;
+const AUTO_PASS_TIMEOUT_MS = 6_000;
 
 function generateRoomCode(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ";
@@ -21,6 +22,11 @@ function generateRoomCode(): string {
 export class DurakRoom extends Room<GameState> {
   maxClients = 6;
   private disconnectTimers = new Map<string, Delayed>();
+  private autoPassTimers = new Map<string, Delayed>();
+
+  private log(msg: string, ...args: unknown[]): void {
+    console.log(`[Room ${this.state?.roomCode ?? "?"}] ${msg}`, ...args);
+  }
 
   onCreate(_options: Record<string, unknown>) {
     this.setState(new GameState());
@@ -30,180 +36,221 @@ export class DurakRoom extends Room<GameState> {
     this.setMetadata({ roomCode });
 
     this.onMessage("attack", (client, message: { suit: string; rank: number }) => {
-      if (this.state.currentPhase !== "attacking") return;
-      if (client.sessionId !== this.state.attackStatus.attacker.sessionId) return;
+      try {
+        if (this.state.currentPhase !== "attacking") return;
+        if (client.sessionId !== this.state.attackStatus.attacker.sessionId) return;
 
-      const player = this.state.players.get(client.sessionId);
-      if (!player) return;
+        const player = this.state.players.get(client.sessionId);
+        if (!player) return;
 
-      const card = this.removeCardFromHand(player, message.suit, message.rank);
-      if (!card) return;
-
-      this.pushAttackCard(card, client.sessionId);
-      this.state.currentPhase = "defending";
-    });
-
-    this.onMessage("addAttack", (client, message: { suit: string; rank: number }) => {
-      if (this.state.currentPhase !== "defending") return;
-      if (client.sessionId === this.state.attackStatus.defender.sessionId) return;
-
-      const player = this.state.players.get(client.sessionId);
-      if (!player) return;
-
-      const { canAdd, reason } = this.canAddAttack(message.rank);
-      if (!canAdd) {
-        if (
-          client.sessionId === this.state.attackStatus.attacker.sessionId
-          && (
-            reason === AttackErrorReason.PAIRS_FULL
-            || reason === AttackErrorReason.DEFENDER_HAND_FULL
-          )
-        ) {
-          this.trySwapAttack(player, message.suit, message.rank);
-        }
-        return;
-      }
-
-      const card = this.removeCardFromHand(player, message.suit, message.rank);
-      if (!card) return;
-
-      this.pushAttackCard(card, client.sessionId);
-      this.state.passedPlayers.clear();
-    });
-
-    this.onMessage("defend", (client, message: { suit: string; rank: number; pairIndex: number }) => {
-      const { attackStatus } = this.state;
-      if (this.state.currentPhase !== "defending") return;
-      if (client.sessionId !== attackStatus.defender.sessionId) return;
-
-      const player = this.state.players.get(client.sessionId);
-      if (!player) return;
-
-      const pair = attackStatus.pairs.at(message.pairIndex);
-      if (!pair) return;
-      if (pair.defendingCard.suit !== "" || pair.defendingCard.rank !== 0) return;
-
-      const cardIndex = player.hand.findIndex(
-        (c) => c.suit === message.suit && c.rank === message.rank,
-      );
-      if (cardIndex === -1) return;
-
-      const card = player.hand.at(cardIndex);
-      if (!card) return;
-
-      if (!this.isLegalDefense(card, pair.attackingCard)) return;
-
-      pair.defendingCard.suit = card.suit;
-      pair.defendingCard.rank = card.rank;
-      player.hand.splice(cardIndex, 1);
-
-      this.checkDefenseSuccess();
-    });
-
-    this.onMessage("pass", (client) => {
-      if (this.state.currentPhase !== "defending") return;
-      if (client.sessionId === this.state.attackStatus.defender.sessionId) return;
-
-      const idx = this.state.passedPlayers.indexOf(client.sessionId);
-      if (idx === -1) {
-        this.state.passedPlayers.push(client.sessionId);
-      } else {
-        this.state.passedPlayers.splice(idx, 1);
-      }
-
-      this.checkDefenseSuccess();
-    });
-
-    this.onMessage("deflect", (client, message: { suit: string; rank: number }) => {
-      if (this.state.currentPhase !== "defending") return;
-      const { attackStatus } = this.state;
-      if (client.sessionId !== attackStatus.defender.sessionId) return;
-
-      if (!this.canDeflect(message.rank)) return;
-
-      const player = this.state.players.get(client.sessionId);
-      if (!player) return;
-
-      if ((message.suit === this.state.trumpCard.suit) && (!player.specialDeflectHistory.includes(message.rank))) {
-        player.specialDeflectHistory.push(message.rank);
-      }
-      else {
         const card = this.removeCardFromHand(player, message.suit, message.rank);
         if (!card) return;
 
+        this.log("attack: %s plays %s-%d", player.name, card.suit, card.rank);
         this.pushAttackCard(card, client.sessionId);
+        this.state.currentPhase = "defending";
+        this.scheduleAutoPassTimers();
+      } catch (err) {
+        this.log("ERROR in attack handler:", err);
       }
+    });
 
-      const newDefender = this.getNextPlayerInTurnOrder(attackStatus.defender.sessionId);
-      if (!newDefender) return;
+    this.onMessage("addAttack", (client, message: { suit: string; rank: number }) => {
+      try {
+        const phase = this.state.currentPhase;
+        if (phase !== "defending" && phase !== "throwing-in") return;
+        if (client.sessionId === this.state.attackStatus.defender.sessionId) return;
 
-      this.announce(`${player.name} העביר ל ${newDefender.name}`);
+        const player = this.state.players.get(client.sessionId);
+        if (!player) return;
 
-      attackStatus.attacker.assign({
-        sessionId: player.sessionId,
-        name: player.name,
-      });
-      attackStatus.defender.assign({
-        sessionId: newDefender.sessionId,
-        name: newDefender.name,
-      });
-      this.state.passedPlayers.clear();
+        if (phase === "throwing-in") {
+          if (!this.canAddThrowIn(message.rank)) return;
+        } else {
+          const { canAdd, reason } = this.canAddAttack(message.rank);
+          if (!canAdd) {
+            if (
+              client.sessionId === this.state.attackStatus.attacker.sessionId
+              && (
+                reason === AttackErrorReason.PAIRS_FULL
+                || reason === AttackErrorReason.DEFENDER_HAND_FULL
+              )
+            ) {
+              this.trySwapAttack(player, message.suit, message.rank);
+            }
+            return;
+          }
+        }
+
+        const card = this.removeCardFromHand(player, message.suit, message.rank);
+        if (!card) return;
+
+        this.log("addAttack (%s): %s plays %s-%d", phase, player.name, card.suit, card.rank);
+        this.pushAttackCard(card, client.sessionId);
+        this.state.passedPlayers.clear();
+        this.scheduleAutoPassTimers();
+      } catch (err) {
+        this.log("ERROR in addAttack handler:", err);
+      }
+    });
+
+    this.onMessage("defend", (client, message: { suit: string; rank: number; pairIndex: number }) => {
+      try {
+        const { attackStatus } = this.state;
+        if (this.state.currentPhase !== "defending") return;
+        if (client.sessionId !== attackStatus.defender.sessionId) return;
+
+        const player = this.state.players.get(client.sessionId);
+        if (!player) return;
+
+        const pair = attackStatus.pairs.at(message.pairIndex);
+        if (!pair) return;
+        if (pair.defendingCard.suit !== "" || pair.defendingCard.rank !== 0) return;
+
+        const cardIndex = player.hand.findIndex(
+          (c) => c.suit === message.suit && c.rank === message.rank,
+        );
+        if (cardIndex === -1) return;
+
+        const card = player.hand.at(cardIndex);
+        if (!card) return;
+
+        if (!this.isLegalDefense(card, pair.attackingCard)) return;
+
+        this.log("defend: %s plays %s-%d on pair %d", player.name, card.suit, card.rank, message.pairIndex);
+        pair.defendingCard.suit = card.suit;
+        pair.defendingCard.rank = card.rank;
+        player.hand.splice(cardIndex, 1);
+
+        this.state.passedPlayers.clear();
+        this.scheduleAutoPassTimers();
+        this.checkDefenseSuccess();
+      } catch (err) {
+        this.log("ERROR in defend handler:", err);
+      }
+    });
+
+    this.onMessage("pass", (client) => {
+      try {
+        const phase = this.state.currentPhase;
+        if (phase !== "defending" && phase !== "throwing-in") return;
+        if (client.sessionId === this.state.attackStatus.defender.sessionId) return;
+
+        const player = this.state.players.get(client.sessionId);
+        const idx = this.state.passedPlayers.indexOf(client.sessionId);
+        if (idx === -1) {
+          this.log("pass (%s): %s passed", phase, player?.name ?? client.sessionId);
+          this.state.passedPlayers.push(client.sessionId);
+          const timer = this.autoPassTimers.get(client.sessionId);
+          if (timer) {
+            timer.clear();
+            this.autoPassTimers.delete(client.sessionId);
+          }
+        } else {
+          this.log("pass (%s): %s un-passed", phase, player?.name ?? client.sessionId);
+          this.state.passedPlayers.splice(idx, 1);
+          this.scheduleAutoPassTimers();
+        }
+
+        if (phase === "throwing-in") {
+          this.checkThrowInComplete();
+        } else {
+          this.checkDefenseSuccess();
+        }
+      } catch (err) {
+        this.log("ERROR in pass handler:", err);
+      }
+    });
+
+    this.onMessage("deflect", (client, message: { suit: string; rank: number }) => {
+      try {
+        if (this.state.currentPhase !== "defending") return;
+        const { attackStatus } = this.state;
+        if (client.sessionId !== attackStatus.defender.sessionId) return;
+
+        if (!this.canDeflect(message.rank)) return;
+
+        const player = this.state.players.get(client.sessionId);
+        if (!player) return;
+
+        this.log("deflect: %s deflects rank %d", player.name, message.rank);
+
+        if ((message.suit === this.state.trumpCard.suit) && (!player.specialDeflectHistory.includes(message.rank))) {
+          player.specialDeflectHistory.push(message.rank);
+        }
+        else {
+          const card = this.removeCardFromHand(player, message.suit, message.rank);
+          if (!card) return;
+
+          this.pushAttackCard(card, client.sessionId);
+        }
+
+        const newDefender = this.getNextPlayerInTurnOrder(attackStatus.defender.sessionId);
+        if (!newDefender) return;
+
+        this.announce(`${player.name} העביר ל ${newDefender.name}`);
+
+        attackStatus.attacker.assign({
+          sessionId: player.sessionId,
+          name: player.name,
+        });
+        attackStatus.defender.assign({
+          sessionId: newDefender.sessionId,
+          name: newDefender.name,
+        });
+        this.state.passedPlayers.clear();
+        this.scheduleAutoPassTimers();
+      } catch (err) {
+        this.log("ERROR in deflect handler:", err);
+      }
     });
 
     this.onMessage("takeCards", (client) => {
-      if (this.state.currentPhase !== "defending") return;
-      const { attackStatus } = this.state;
-      if (client.sessionId !== attackStatus.defender.sessionId) return;
+      try {
+        if (this.state.currentPhase !== "defending") return;
+        const { attackStatus } = this.state;
+        if (client.sessionId !== attackStatus.defender.sessionId) return;
 
-      const defender = this.state.players.get(client.sessionId);
-      if (!defender) return;
+        const defender = this.state.players.get(client.sessionId);
+        if (!defender) return;
 
-      this.announce(`${defender.name} ${failedDefenceMessages[Math.floor(Math.random() * failedDefenceMessages.length)]}`);
-      
+        this.log("takeCards: %s gives up, entering throwing-in", defender.name);
+        this.announce(`${defender.name} ${failedDefenceMessages[Math.floor(Math.random() * failedDefenceMessages.length)]}`);
 
-      for (const pair of attackStatus.pairs) {
-        const atk = new Card();
-        atk.suit = pair.attackingCard.suit;
-        atk.rank = pair.attackingCard.rank;
-        defender.hand.push(atk);
-
-        if (pair.defendingCard.suit !== "" || pair.defendingCard.rank !== 0) {
-          const def = new Card();
-          def.suit = pair.defendingCard.suit;
-          def.rank = pair.defendingCard.rank;
-          defender.hand.push(def);
-        }
+        this.state.currentPhase = "throwing-in";
+        this.state.passedPlayers.clear();
+        this.scheduleAutoPassTimers();
+      } catch (err) {
+        this.log("ERROR in takeCards handler:", err);
       }
-
-      this.refillHands();
-      this.removeFinishedPlayers();
-
-      if (this.state.turnOrder.length <= 1) {
-        this.finishGame();
-        return;
-      }
-
-      const nextAttacker = this.getNextPlayerInTurnOrder(attackStatus.defender.sessionId);
-      if (!nextAttacker) return;
-      this.playTurn(nextAttacker);
     });
 
     this.onMessage("startGame", (client) => {
-      if (this.state.currentPhase !== "waiting") return;
-      if (client.sessionId !== this.state.hostSessionId) return;
-      if (this.state.players.size < MIN_PLAYERS_TO_START) return;
+      try {
+        if (this.state.currentPhase !== "waiting") return;
+        if (client.sessionId !== this.state.hostSessionId) return;
+        if (this.state.players.size < MIN_PLAYERS_TO_START) return;
 
-      this.lock();
-      this.startGame();
+        this.log("startGame: host %s starting game with %d players", client.sessionId, this.state.players.size);
+        this.lock();
+        this.startGame();
+      } catch (err) {
+        this.log("ERROR in startGame handler:", err);
+      }
     });
 
     this.onMessage("playAgain", (client) => {
-      if (this.state.currentPhase !== "finished") return;
-      if (client.sessionId !== this.state.hostSessionId) return;
-      if (this.state.players.size < MIN_PLAYERS_TO_START) return;
+      try {
+        if (this.state.currentPhase !== "finished") return;
+        if (client.sessionId !== this.state.hostSessionId) return;
+        if (this.state.players.size < MIN_PLAYERS_TO_START) return;
 
-      this.resetForNewGame();
-      this.startGame();
+        this.log("playAgain: host %s restarting game", client.sessionId);
+        this.resetForNewGame();
+        this.startGame();
+      } catch (err) {
+        this.log("ERROR in playAgain handler:", err);
+      }
     });
   }
 
@@ -256,6 +303,7 @@ export class DurakRoom extends Room<GameState> {
       pair.playedBy = mainAttacker.sessionId;
 
       this.state.passedPlayers.clear();
+      this.scheduleAutoPassTimers();
       this.announce(`${mainAttacker.name} החליף קלף בהתקפה`);
       return;
     }
@@ -274,6 +322,7 @@ export class DurakRoom extends Room<GameState> {
     );
     if (!allPassed) return;
 
+    this.log("checkDefenseSuccess: defense succeeded, all passed");
     const defenderPlayer = this.state.players.get(defenderSessionId);
     if (defenderPlayer) {
       this.announce(`${defenderPlayer.name} ${defenceMessages[Math.floor(Math.random() * defenceMessages.length)]}`);
@@ -309,6 +358,62 @@ export class DurakRoom extends Room<GameState> {
       const first = this.state.players.get(firstId);
       if (first) this.playTurn(first);
     }
+  }
+
+  resolveThrowIn(): void {
+    const { attackStatus } = this.state;
+    const defender = this.state.players.get(attackStatus.defender.sessionId);
+    if (!defender) return;
+
+    this.log("resolveThrowIn: %s takes %d pairs", defender.name, attackStatus.pairs.length);
+    for (const pair of attackStatus.pairs) {
+      const atk = new Card();
+      atk.suit = pair.attackingCard.suit;
+      atk.rank = pair.attackingCard.rank;
+      defender.hand.push(atk);
+
+      if (pair.defendingCard.suit !== "" || pair.defendingCard.rank !== 0) {
+        const def = new Card();
+        def.suit = pair.defendingCard.suit;
+        def.rank = pair.defendingCard.rank;
+        defender.hand.push(def);
+      }
+    }
+
+    this.refillHands();
+    this.removeFinishedPlayers();
+
+    if (this.state.turnOrder.length <= 1) {
+      this.finishGame();
+      return;
+    }
+
+    const nextAttacker = this.getNextPlayerInTurnOrder(attackStatus.defender.sessionId);
+    if (!nextAttacker) return;
+    this.playTurn(nextAttacker);
+  }
+
+  canAddThrowIn(rank: number): boolean {
+    const { attackStatus } = this.state;
+    if (!this.getTableRanks().has(rank)) return false;
+    if (attackStatus.pairs.length >= 6) return false;
+    return true;
+  }
+
+  checkThrowInComplete(): void {
+    if (this.state.currentPhase !== "throwing-in") return;
+
+    const defenderSessionId = this.state.attackStatus.defender.sessionId;
+    const nonDefenders = Array.from(this.state.turnOrder).filter(
+      (id): id is string => id !== undefined && id !== defenderSessionId,
+    );
+    const allPassed = nonDefenders.every(
+      (id) => this.state.passedPlayers.indexOf(id) !== -1,
+    );
+    if (!allPassed) return;
+
+    this.log("checkThrowInComplete: all passed, resolving throw-in");
+    this.resolveThrowIn();
   }
 
   refillHands(): void {
@@ -418,6 +523,8 @@ export class DurakRoom extends Room<GameState> {
     player.isConnected = true;
     this.state.players.set(client.sessionId, player);
 
+    this.log("onJoin: %s (%s) joined, %d players total", player.name, client.sessionId, this.state.players.size);
+
     if (this.state.hostSessionId === "") {
       this.state.hostSessionId = client.sessionId;
     }
@@ -427,14 +534,17 @@ export class DurakRoom extends Room<GameState> {
     const player = this.state.players.get(client.sessionId);
     if (player) player.isConnected = false;
 
+    this.log("onLeave: %s (%s) left (consented=%s)", player?.name ?? "?", client.sessionId, consented);
     this.scheduleDisconnectTimeout(client.sessionId);
 
     try {
       if (consented) throw new Error("consented leave");
       await this.allowReconnection(client, 120);
+      this.log("onLeave: %s reconnected", player?.name ?? client.sessionId);
       if (player) player.isConnected = true;
       this.clearDisconnectTimeout(client.sessionId);
     } catch {
+      this.log("onLeave: %s removed (reconnection failed/consented)", player?.name ?? client.sessionId);
       this.clearDisconnectTimeout(client.sessionId);
       this.removePlayer(client.sessionId);
     }
@@ -444,19 +554,25 @@ export class DurakRoom extends Room<GameState> {
     this.clearDisconnectTimeout(sessionId);
 
     const phase = this.state.currentPhase;
-    if (phase !== "attacking" && phase !== "defending") return;
+    if (phase !== "attacking" && phase !== "defending" && phase !== "throwing-in") return;
 
     const { attackStatus } = this.state;
     const isAttacker = sessionId === attackStatus.attacker.sessionId;
     const isDefender = sessionId === attackStatus.defender.sessionId;
 
-    if (phase === "defending" && !isAttacker && !isDefender) {
+    if ((phase === "defending" || phase === "throwing-in") && !isAttacker && !isDefender) {
       if (this.state.passedPlayers.indexOf(sessionId) === -1) {
         this.state.passedPlayers.push(sessionId);
-        this.checkDefenseSuccess();
+        if (phase === "throwing-in") {
+          this.checkThrowInComplete();
+        } else {
+          this.checkDefenseSuccess();
+        }
       }
       return;
     }
+
+    if (phase === "throwing-in" && isDefender) return;
 
     if (!isAttacker && !isDefender) return;
 
@@ -466,6 +582,42 @@ export class DurakRoom extends Room<GameState> {
     }, DISCONNECT_TURN_TIMEOUT_MS);
 
     this.disconnectTimers.set(sessionId, timer);
+  }
+
+  private scheduleAutoPassTimers(): void {
+    this.clearAutoPassTimers();
+    const phase = this.state.currentPhase;
+    if (phase !== "defending" && phase !== "throwing-in") return;
+
+    const defenderSessionId = this.state.attackStatus.defender.sessionId;
+    for (const id of this.state.turnOrder) {
+      if (!id) continue;
+      if (id === defenderSessionId) continue;
+      if (this.state.passedPlayers.indexOf(id) !== -1) continue;
+
+      const timer = this.clock.setTimeout(() => {
+        this.autoPassTimers.delete(id);
+        const curPhase = this.state.currentPhase;
+        if (curPhase !== "defending" && curPhase !== "throwing-in") return;
+        if (this.state.passedPlayers.indexOf(id) !== -1) return;
+
+        this.state.passedPlayers.push(id);
+        if (curPhase === "throwing-in") {
+          this.checkThrowInComplete();
+        } else {
+          this.checkDefenseSuccess();
+        }
+      }, AUTO_PASS_TIMEOUT_MS);
+
+      this.autoPassTimers.set(id, timer);
+    }
+  }
+
+  private clearAutoPassTimers(): void {
+    for (const timer of this.autoPassTimers.values()) {
+      timer.clear();
+    }
+    this.autoPassTimers.clear();
   }
 
   private clearDisconnectTimeout(sessionId: string): void {
@@ -486,32 +638,12 @@ export class DurakRoom extends Room<GameState> {
     }
 
     if (this.state.currentPhase === "defending" && sessionId === attackStatus.defender.sessionId) {
-      const defender = this.state.players.get(sessionId);
-      if (!defender) return;
+      this.resolveThrowIn();
+      return;
+    }
 
-      for (const pair of attackStatus.pairs) {
-        const atk = new Card();
-        atk.suit = pair.attackingCard.suit;
-        atk.rank = pair.attackingCard.rank;
-        defender.hand.push(atk);
-        if (pair.defendingCard.suit !== "" || pair.defendingCard.rank !== 0) {
-          const def = new Card();
-          def.suit = pair.defendingCard.suit;
-          def.rank = pair.defendingCard.rank;
-          defender.hand.push(def);
-        }
-      }
-
-      this.refillHands();
-      this.removeFinishedPlayers();
-
-      if (this.state.turnOrder.length <= 1) {
-        this.finishGame();
-        return;
-      }
-
-      const nextAttacker = this.getNextPlayerInTurnOrder(attackStatus.defender.sessionId);
-      if (nextAttacker) this.playTurn(nextAttacker);
+    if (this.state.currentPhase === "throwing-in" && sessionId === attackStatus.defender.sessionId) {
+      this.resolveThrowIn();
     }
   }
 
@@ -526,7 +658,7 @@ export class DurakRoom extends Room<GameState> {
     }
 
     const phase = this.state.currentPhase;
-    if (phase !== "attacking" && phase !== "defending") return;
+    if (phase !== "attacking" && phase !== "defending" && phase !== "throwing-in") return;
     if (this.state.turnOrder.length <= 1) {
       this.finishGame();
       return;
@@ -546,30 +678,40 @@ export class DurakRoom extends Room<GameState> {
     }
 
     if (wasDefender) {
-      this.refillHands();
-      this.removeFinishedPlayers();
-      if (this.state.turnOrder.length <= 1) {
-        this.finishGame();
-        return;
-      }
-      const attacker = this.state.players.get(attackStatus.attacker.sessionId);
-      if (attacker) {
-        const next = this.getNextPlayerInTurnOrder(attacker.sessionId);
-        if (next) this.playTurn(next);
+      if (phase === "throwing-in") {
+        this.resolveThrowIn();
+      } else {
+        this.refillHands();
+        this.removeFinishedPlayers();
+        if (this.state.turnOrder.length <= 1) {
+          this.finishGame();
+          return;
+        }
+        const attacker = this.state.players.get(attackStatus.attacker.sessionId);
+        if (attacker) {
+          const next = this.getNextPlayerInTurnOrder(attacker.sessionId);
+          if (next) this.playTurn(next);
+        }
       }
       return;
     }
 
     const passIdx = this.state.passedPlayers.indexOf(sessionId);
     if (passIdx !== -1) this.state.passedPlayers.splice(passIdx, 1);
-    this.checkDefenseSuccess();
+    if (phase === "throwing-in") {
+      this.checkThrowInComplete();
+    } else {
+      this.checkDefenseSuccess();
+    }
   }
 
   finishGame(): void {
+    this.clearAutoPassTimers();
     const durakId = this.state.turnOrder.at(0);
     this.state.durakSessionId = durakId ?? "";
     this.state.currentPhase = "finished";
 
+    this.log("finishGame: game over, durak=%s", durakId ?? "none");
     if (durakId) {
       const durak = this.state.players.get(durakId);
       if (durak) {
@@ -695,9 +837,11 @@ export class DurakRoom extends Room<GameState> {
   }
 
   playTurn(attacker: Player): void {
+    this.clearAutoPassTimers();
     const defender = this.getNextPlayerInTurnOrder(attacker.sessionId);
     if (!defender) return;
 
+    this.log("playTurn: %s attacks, %s defends", attacker.name, defender.name);
     this.state.attackStatus.attacker.assign({
       sessionId: attacker.sessionId,
       name: attacker.name,

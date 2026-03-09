@@ -12,9 +12,10 @@ interface HandProps {
   onCardClick?: (card: CardLike) => void;
   onReorder?: (fromIndex: number, toIndex: number) => void;
   onSort?: () => void;
+  autoSort?: boolean;
 }
 
-export function Hand({ cards, label, onCardClick, onReorder, onSort }: HandProps) {
+export function Hand({ cards, label, onCardClick, onReorder, onSort, autoSort }: HandProps) {
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dropIndex, setDropIndex] = useState<number | null>(null);
 
@@ -51,10 +52,14 @@ export function Hand({ cards, label, onCardClick, onReorder, onSort }: HandProps
           <button
             type="button"
             onClick={onSort}
-            className="px-2 py-0.5 rounded text-xs font-medium bg-slate-700 text-slate-300 hover:bg-slate-600 transition-colors"
-            title="Sort by suit and rank"
+            className={`px-2 py-0.5 rounded text-xs font-medium transition-colors ${
+              autoSort
+                ? "bg-amber-600 text-white hover:bg-amber-500"
+                : "bg-slate-700 text-slate-300 hover:bg-slate-600"
+            }`}
+            title={autoSort ? "Auto-sort is on — click to disable" : "Sort by suit and rank (click to toggle auto-sort)"}
           >
-            Sort
+            {autoSort ? "Auto-sort ✓" : "Sort"}
           </button>
         )}
         {label && (
