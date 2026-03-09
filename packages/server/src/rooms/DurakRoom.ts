@@ -400,13 +400,13 @@ export class DurakRoom extends Room<GameState> {
 
   canAddAttack(rank: number): {canAdd: boolean, reason?: string} {
     const { attackStatus } = this.state;
+    if (!this.getTableRanks().has(rank)) return {canAdd: false, reason: AttackErrorReason.RANK_NOT_ALLOWED};
     if (attackStatus.pairs.length >= 6) return {canAdd: false, reason: AttackErrorReason.PAIRS_FULL};
 
     const defender = this.state.players.get(attackStatus.defender.sessionId);
     if (!defender) return {canAdd: false, reason: AttackErrorReason.DEFENDER_NOT_FOUND};
     if (this.undefendedCount() + 1 > defender.hand.length) return {canAdd: false, reason: AttackErrorReason.DEFENDER_HAND_FULL};
 
-    if (!this.getTableRanks().has(rank)) return {canAdd: false, reason: AttackErrorReason.RANK_NOT_ALLOWED};
 
     return {canAdd: true, reason: undefined};
   }
