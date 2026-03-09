@@ -397,6 +397,11 @@ export class DurakRoom extends Room<GameState> {
     const { attackStatus } = this.state;
     if (!this.getTableRanks().has(rank)) return false;
     if (attackStatus.pairs.length >= 6) return false;
+
+    const defender = this.state.players.get(attackStatus.defender.sessionId);
+    if (!defender) return false;
+    if (attackStatus.pairs.length + 1 > defender.hand.length) return false;
+
     return true;
   }
 
