@@ -9,13 +9,14 @@ interface CardLike {
 interface HandProps {
   cards: CardLike[];
   label?: string;
+  role?: "attacker" | "defender";
   onCardClick?: (card: CardLike) => void;
   onReorder?: (fromIndex: number, toIndex: number) => void;
   onSort?: () => void;
   autoSort?: boolean;
 }
 
-export function Hand({ cards, label, onCardClick, onReorder, onSort, autoSort }: HandProps) {
+export function Hand({ cards, label, role, onCardClick, onReorder, onSort, autoSort }: HandProps) {
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dropIndex, setDropIndex] = useState<number | null>(null);
 
@@ -63,7 +64,13 @@ export function Hand({ cards, label, onCardClick, onReorder, onSort, autoSort }:
           </button>
         )}
         {label && (
-          <h3 className="text-slate-400 text-sm font-medium">{label}</h3>
+          <h3 className={`text-sm font-medium ${
+            role === "attacker"
+              ? "text-red-400 font-semibold"
+              : role === "defender"
+                ? "text-sky-400 font-semibold"
+                : "text-slate-400"
+          }`}>{label}</h3>
         )}
       </div>
       <div className="flex flex-wrap gap-2">

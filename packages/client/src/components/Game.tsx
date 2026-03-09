@@ -133,6 +133,16 @@ export function Game() {
     state.currentPhase === "attacking" &&
     state.attackStatus.attacker.sessionId === room.sessionId;
 
+  const [attackFlash, setAttackFlash] = useState(false);
+  useEffect(() => {
+    if (!isMyAttack) {
+      setAttackFlash(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setAttackFlash(true), 8000);
+    return () => window.clearTimeout(timer);
+  }, [isMyAttack]);
+
   const isMyDefense =
     state.currentPhase === "defending" &&
     state.attackStatus.defender.sessionId === room.sessionId;
@@ -198,13 +208,22 @@ export function Game() {
     .map((id) => [id, state.players.get(id)] as const)
     .filter((entry): entry is [string, NonNullable<typeof entry[1]>] => entry[1] != null);
 
-  const toNode = ([sessionId, player]: (typeof otherPlayers)[number]) => (
-    <FaceDownHand
-      key={sessionId}
-      count={player.hand.length}
-      label={player.name ?? "Anonymous"}
-    />
-  );
+  const toNode = ([sessionId, player]: (typeof otherPlayers)[number]) => {
+    const role =
+      sessionId === state.attackStatus.attacker.sessionId
+        ? ("attacker" as const)
+        : sessionId === state.attackStatus.defender.sessionId
+          ? ("defender" as const)
+          : undefined;
+    return (
+      <FaceDownHand
+        key={sessionId}
+        count={player.hand.length}
+        label={player.name ?? "Anonymous"}
+        role={role}
+      />
+    );
+  };
 
   // Distribute opponents into left / top / right based on seating order.
   // Index 0 = immediate left neighbour, last = immediate right neighbour.
@@ -222,7 +241,7 @@ export function Game() {
   }
 
   return (
-    <section className="space-y-6 max-w-6xl mx-auto">
+    <section className={`space-y-6 max-w-6xl mx-auto${attackFlash ? " attack-flash" : ""}`}>
       <GameAnnouncement announcement={announcement} />
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold text-slate-200">Game</h2>
@@ -294,6 +313,7 @@ export function Game() {
             <div className="flex flex-col items-start gap-2">
               <Hand
                 cards={handOrder}
+                role={isMyAttack ? "attacker" : isMyDefense ? "defender" : undefined}
                 label={
                   isMyAttack
                     ? "Your turn — pick a card to attack"
