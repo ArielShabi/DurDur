@@ -524,7 +524,7 @@ export class DurakRoom extends Room<GameState> {
   onJoin(client: Client, options: { name?: string } = {}) {
     const player = new Player();
     player.sessionId = client.sessionId;
-    player.name = options.name ?? `Player_${client.sessionId.slice(0, 6)}`;
+    player.name = (options.name ?? `Player_${client.sessionId.slice(0, 6)}`).slice(0, 15);
     player.isConnected = true;
     this.state.players.set(client.sessionId, player);
 

@@ -54,7 +54,8 @@ function App() {
             type="text"
             placeholder="Your name"
             value={playerName}
-            onChange={(e) => setPlayerName(e.target.value)}
+            onChange={(e) => setPlayerName(e.target.value.slice(0, 15))}
+            maxLength={15}
             disabled={joining}
             className="w-full px-3 py-2 rounded bg-slate-800 border border-slate-600 text-slate-100 placeholder-slate-500 disabled:opacity-50"
           />
