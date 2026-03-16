@@ -7,11 +7,13 @@ interface FaceDownHandProps {
   label?: string;
   /** Active role in the current round */
   role?: "attacker" | "defender";
+  /** Whether this player is a bot */
+  isBot?: boolean;
 }
 
 const MAX_VISIBLE_CARDS = 3;
 
-export function FaceDownHand({ count, label, role }: FaceDownHandProps) {
+export function FaceDownHand({ count, label, role, isBot }: FaceDownHandProps) {
   const visibleCount = Math.min(count, MAX_VISIBLE_CARDS);
 
   const roleStyle =
@@ -36,6 +38,11 @@ export function FaceDownHand({ count, label, role }: FaceDownHandProps) {
       {label && (
         <span className={`text-sm truncate max-w-[8rem] ${labelStyle}`}>
           {label}
+          {isBot && (
+            <span className="ml-1.5 text-[0.65rem] px-1.5 py-0.5 rounded bg-violet-500/20 text-violet-400 align-middle">
+              bot
+            </span>
+          )}
         </span>
       )}
       {roleLabel && (

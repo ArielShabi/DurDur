@@ -2,6 +2,7 @@ import { Room, Client, type Delayed } from "@colyseus/core";
 import { GameState, Player, Card, CardPair } from "@durak/schema";
 import { defenceMessages, failedDefenceMessages } from "../MessageConsts.js";
 import { AttackErrorReason } from "../consts.js";
+import { BotAI } from "../BotAI.js";
 
 const SUITS = ["hearts", "diamonds", "clubs", "spades"] as const;
 // const RANKS = [9, 10, 11, 12, 13, 14] as const;
@@ -9,6 +10,8 @@ const RANKS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14] as const;
 const MIN_PLAYERS_TO_START = 2;
 const DISCONNECT_TURN_TIMEOUT_MS = 30_000;
 const AUTO_PASS_TIMEOUT_MS = 6_000;
+const BOT_ACTION_DELAY_MS = 1_000;
+const BOT_ACTION_JITTER_MS = 1_000;
 
 function generateRoomCode(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ";
@@ -23,6 +26,7 @@ export class DurakRoom extends Room<GameState> {
   maxClients = 6;
   private disconnectTimers = new Map<string, Delayed>();
   private autoPassTimers = new Map<string, Delayed>();
+  private botTimer: Delayed | null = null;
 
   private log(msg: string, ...args: unknown[]): void {
     console.log(`[Room ${this.state?.roomCode ?? "?"}] ${msg}`, ...args);
@@ -36,193 +40,27 @@ export class DurakRoom extends Room<GameState> {
     this.setMetadata({ roomCode });
 
     this.onMessage("attack", (client, message: { suit: string; rank: number }) => {
-      try {
-        if (this.state.currentPhase !== "attacking") return;
-        if (client.sessionId !== this.state.attackStatus.attacker.sessionId) return;
-
-        const player = this.state.players.get(client.sessionId);
-        if (!player) return;
-
-        const card = this.removeCardFromHand(player, message.suit, message.rank);
-        if (!card) return;
-
-        this.log("attack: %s plays %s-%d", player.name, card.suit, card.rank);
-        this.pushAttackCard(card, client.sessionId);
-        this.state.currentPhase = "defending";
-        this.scheduleAutoPassTimers();
-      } catch (err) {
-        this.log("ERROR in attack handler:", err);
-      }
+      this.handleAttack(client.sessionId, message.suit, message.rank);
     });
 
     this.onMessage("addAttack", (client, message: { suit: string; rank: number }) => {
-      try {
-        const phase = this.state.currentPhase;
-        if (phase !== "defending" && phase !== "throwing-in") return;
-        if (client.sessionId === this.state.attackStatus.defender.sessionId) return;
-
-        const player = this.state.players.get(client.sessionId);
-        if (!player) return;
-
-        if (phase === "throwing-in") {
-          if (!this.canAddThrowIn(message.rank)) return;
-        } else {
-          const { canAdd, reason } = this.canAddAttack(message.rank);
-          if (!canAdd) {
-            if (
-              client.sessionId === this.state.attackStatus.attacker.sessionId
-              && (
-                reason === AttackErrorReason.PAIRS_FULL
-                || reason === AttackErrorReason.DEFENDER_HAND_FULL
-              )
-            ) {
-              this.trySwapAttack(player, message.suit, message.rank);
-            }
-            return;
-          }
-        }
-
-        const card = this.removeCardFromHand(player, message.suit, message.rank);
-        if (!card) return;
-
-        this.log("addAttack (%s): %s plays %s-%d", phase, player.name, card.suit, card.rank);
-        this.pushAttackCard(card, client.sessionId);
-        this.state.passedPlayers.clear();
-        this.scheduleAutoPassTimers();
-      } catch (err) {
-        this.log("ERROR in addAttack handler:", err);
-      }
+      this.handleAddAttack(client.sessionId, message.suit, message.rank);
     });
 
     this.onMessage("defend", (client, message: { suit: string; rank: number; pairIndex: number }) => {
-      try {
-        const { attackStatus } = this.state;
-        if (this.state.currentPhase !== "defending") return;
-        if (client.sessionId !== attackStatus.defender.sessionId) return;
-
-        const player = this.state.players.get(client.sessionId);
-        if (!player) return;
-
-        const pair = attackStatus.pairs.at(message.pairIndex);
-        if (!pair) return;
-        if (pair.defendingCard.suit !== "" || pair.defendingCard.rank !== 0) return;
-
-        const cardIndex = player.hand.findIndex(
-          (c) => c.suit === message.suit && c.rank === message.rank,
-        );
-        if (cardIndex === -1) return;
-
-        const card = player.hand.at(cardIndex);
-        if (!card) return;
-
-        if (!this.isLegalDefense(card, pair.attackingCard)) return;
-
-        this.log("defend: %s plays %s-%d on pair %d", player.name, card.suit, card.rank, message.pairIndex);
-        pair.defendingCard.suit = card.suit;
-        pair.defendingCard.rank = card.rank;
-        player.hand.splice(cardIndex, 1);
-
-        this.state.passedPlayers.clear();
-        this.scheduleAutoPassTimers();
-        this.checkDefenseSuccess();
-      } catch (err) {
-        this.log("ERROR in defend handler:", err);
-      }
+      this.handleDefend(client.sessionId, message.suit, message.rank, message.pairIndex);
     });
 
     this.onMessage("pass", (client) => {
-      try {
-        const phase = this.state.currentPhase;
-        if (phase !== "defending" && phase !== "throwing-in") return;
-        if (client.sessionId === this.state.attackStatus.defender.sessionId) return;
-
-        const player = this.state.players.get(client.sessionId);
-        const idx = this.state.passedPlayers.indexOf(client.sessionId);
-        if (idx === -1) {
-          this.log("pass (%s): %s passed", phase, player?.name ?? client.sessionId);
-          this.state.passedPlayers.push(client.sessionId);
-          const timer = this.autoPassTimers.get(client.sessionId);
-          if (timer) {
-            timer.clear();
-            this.autoPassTimers.delete(client.sessionId);
-          }
-        } else {
-          this.log("pass (%s): %s un-passed", phase, player?.name ?? client.sessionId);
-          this.state.passedPlayers.splice(idx, 1);
-          this.scheduleAutoPassTimers();
-        }
-
-        if (phase === "throwing-in") {
-          this.checkThrowInComplete();
-        } else {
-          this.checkDefenseSuccess();
-        }
-      } catch (err) {
-        this.log("ERROR in pass handler:", err);
-      }
+      this.handlePass(client.sessionId);
     });
 
     this.onMessage("deflect", (client, message: { suit: string; rank: number }) => {
-      try {
-        if (this.state.currentPhase !== "defending") return;
-        const { attackStatus } = this.state;
-        if (client.sessionId !== attackStatus.defender.sessionId) return;
-
-        if (!this.canDeflect(message.rank)) return;
-
-        const player = this.state.players.get(client.sessionId);
-        if (!player) return;
-
-        this.log("deflect: %s deflects rank %d", player.name, message.rank);
-
-        if ((message.suit === this.state.trumpCard.suit) && (!player.specialDeflectHistory.includes(message.rank))) {
-          player.specialDeflectHistory.push(message.rank);
-        }
-        else {
-          const card = this.removeCardFromHand(player, message.suit, message.rank);
-          if (!card) return;
-
-          this.pushAttackCard(card, client.sessionId);
-        }
-
-        const newDefender = this.getNextPlayerInTurnOrder(attackStatus.defender.sessionId);
-        if (!newDefender) return;
-
-        this.announce(`${player.name} העביר ל ${newDefender.name}`);
-
-        attackStatus.attacker.assign({
-          sessionId: player.sessionId,
-          name: player.name,
-        });
-        attackStatus.defender.assign({
-          sessionId: newDefender.sessionId,
-          name: newDefender.name,
-        });
-        this.state.passedPlayers.clear();
-        this.scheduleAutoPassTimers();
-      } catch (err) {
-        this.log("ERROR in deflect handler:", err);
-      }
+      this.handleDeflect(client.sessionId, message.suit, message.rank);
     });
 
     this.onMessage("takeCards", (client) => {
-      try {
-        if (this.state.currentPhase !== "defending") return;
-        const { attackStatus } = this.state;
-        if (client.sessionId !== attackStatus.defender.sessionId) return;
-
-        const defender = this.state.players.get(client.sessionId);
-        if (!defender) return;
-
-        this.log("takeCards: %s gives up, entering throwing-in", defender.name);
-        this.announce(`${defender.name} ${failedDefenceMessages[Math.floor(Math.random() * failedDefenceMessages.length)]}`);
-
-        this.state.currentPhase = "throwing-in";
-        this.state.passedPlayers.clear();
-        this.scheduleAutoPassTimers();
-      } catch (err) {
-        this.log("ERROR in takeCards handler:", err);
-      }
+      this.handleTakeCards(client.sessionId);
     });
 
     this.onMessage("startGame", (client) => {
@@ -252,6 +90,324 @@ export class DurakRoom extends Room<GameState> {
         this.log("ERROR in playAgain handler:", err);
       }
     });
+
+    this.onMessage("addBot", (client) => {
+      try {
+        if (this.state.currentPhase !== "waiting") return;
+        if (client.sessionId !== this.state.hostSessionId) return;
+        if (this.state.players.size >= 6) return;
+        this.addBot();
+      } catch (err) {
+        this.log("ERROR in addBot handler:", err);
+      }
+    });
+
+    this.onMessage("removeBot", (client, message: { sessionId: string }) => {
+      try {
+        if (this.state.currentPhase !== "waiting") return;
+        if (client.sessionId !== this.state.hostSessionId) return;
+        const target = this.state.players.get(message.sessionId);
+        if (!target || !target.isBot) return;
+        this.removeBot(message.sessionId);
+      } catch (err) {
+        this.log("ERROR in removeBot handler:", err);
+      }
+    });
+  }
+
+  // ── Extracted action handlers ──────────────────────────────────────
+
+  handleAttack(sessionId: string, suit: string, rank: number): void {
+    try {
+      if (this.state.currentPhase !== "attacking") return;
+      if (sessionId !== this.state.attackStatus.attacker.sessionId) return;
+
+      const player = this.state.players.get(sessionId);
+      if (!player) return;
+
+      const card = this.removeCardFromHand(player, suit, rank);
+      if (!card) return;
+
+      this.log("attack: %s plays %s-%d", player.name, card.suit, card.rank);
+      this.pushAttackCard(card, sessionId);
+      this.state.currentPhase = "defending";
+      this.scheduleAutoPassTimers();
+      this.scheduleBotActions();
+    } catch (err) {
+      this.log("ERROR in attack handler:", err);
+    }
+  }
+
+  handleAddAttack(sessionId: string, suit: string, rank: number): void {
+    try {
+      const phase = this.state.currentPhase;
+      if (phase !== "defending" && phase !== "throwing-in") return;
+      if (sessionId === this.state.attackStatus.defender.sessionId) return;
+
+      const player = this.state.players.get(sessionId);
+      if (!player) return;
+
+      if (phase === "throwing-in") {
+        if (!this.canAddThrowIn(rank)) return;
+      } else {
+        const { canAdd, reason } = this.canAddAttack(rank);
+        if (!canAdd) {
+          if (
+            sessionId === this.state.attackStatus.attacker.sessionId
+            && (
+              reason === AttackErrorReason.PAIRS_FULL
+              || reason === AttackErrorReason.DEFENDER_HAND_FULL
+            )
+          ) {
+            this.trySwapAttack(player, suit, rank);
+          }
+          return;
+        }
+      }
+
+      const card = this.removeCardFromHand(player, suit, rank);
+      if (!card) return;
+
+      this.log("addAttack (%s): %s plays %s-%d", phase, player.name, card.suit, card.rank);
+      this.pushAttackCard(card, sessionId);
+      this.state.passedPlayers.clear();
+      this.scheduleAutoPassTimers();
+      this.scheduleBotActions();
+    } catch (err) {
+      this.log("ERROR in addAttack handler:", err);
+    }
+  }
+
+  handleDefend(sessionId: string, suit: string, rank: number, pairIndex: number): void {
+    try {
+      const { attackStatus } = this.state;
+      if (this.state.currentPhase !== "defending") return;
+      if (sessionId !== attackStatus.defender.sessionId) return;
+
+      const player = this.state.players.get(sessionId);
+      if (!player) return;
+
+      const pair = attackStatus.pairs.at(pairIndex);
+      if (!pair) return;
+      if (pair.defendingCard.suit !== "" || pair.defendingCard.rank !== 0) return;
+
+      const cardIndex = player.hand.findIndex(
+        (c) => c.suit === suit && c.rank === rank,
+      );
+      if (cardIndex === -1) return;
+
+      const card = player.hand.at(cardIndex);
+      if (!card) return;
+
+      if (!this.isLegalDefense(card, pair.attackingCard)) return;
+
+      this.log("defend: %s plays %s-%d on pair %d", player.name, card.suit, card.rank, pairIndex);
+      pair.defendingCard.suit = card.suit;
+      pair.defendingCard.rank = card.rank;
+      player.hand.splice(cardIndex, 1);
+
+      this.state.passedPlayers.clear();
+      this.scheduleAutoPassTimers();
+      this.checkDefenseSuccess();
+    } catch (err) {
+      this.log("ERROR in defend handler:", err);
+    }
+  }
+
+  handlePass(sessionId: string): void {
+    try {
+      const phase = this.state.currentPhase;
+      if (phase !== "defending" && phase !== "throwing-in") return;
+      if (sessionId === this.state.attackStatus.defender.sessionId) return;
+
+      const player = this.state.players.get(sessionId);
+      const idx = this.state.passedPlayers.indexOf(sessionId);
+      if (idx === -1) {
+        this.log("pass (%s): %s passed", phase, player?.name ?? sessionId);
+        this.state.passedPlayers.push(sessionId);
+        const timer = this.autoPassTimers.get(sessionId);
+        if (timer) {
+          timer.clear();
+          this.autoPassTimers.delete(sessionId);
+        }
+      } else {
+        this.log("pass (%s): %s un-passed", phase, player?.name ?? sessionId);
+        this.state.passedPlayers.splice(idx, 1);
+        this.scheduleAutoPassTimers();
+      }
+
+      if (phase === "throwing-in") {
+        this.checkThrowInComplete();
+      } else {
+        this.checkDefenseSuccess();
+      }
+    } catch (err) {
+      this.log("ERROR in pass handler:", err);
+    }
+  }
+
+  handleDeflect(sessionId: string, suit: string, rank: number): void {
+    try {
+      if (this.state.currentPhase !== "defending") return;
+      const { attackStatus } = this.state;
+      if (sessionId !== attackStatus.defender.sessionId) return;
+
+      if (!this.canDeflect(rank)) return;
+
+      const player = this.state.players.get(sessionId);
+      if (!player) return;
+
+      this.log("deflect: %s deflects rank %d", player.name, rank);
+
+      if ((suit === this.state.trumpCard.suit) && (!player.specialDeflectHistory.includes(rank))) {
+        player.specialDeflectHistory.push(rank);
+      }
+      else {
+        const card = this.removeCardFromHand(player, suit, rank);
+        if (!card) return;
+
+        this.pushAttackCard(card, sessionId);
+      }
+
+      const newDefender = this.getNextPlayerInTurnOrder(attackStatus.defender.sessionId);
+      if (!newDefender) return;
+
+      this.announce(`${player.name} העביר ל ${newDefender.name}`);
+
+      attackStatus.attacker.assign({
+        sessionId: player.sessionId,
+        name: player.name,
+      });
+      attackStatus.defender.assign({
+        sessionId: newDefender.sessionId,
+        name: newDefender.name,
+      });
+      this.state.passedPlayers.clear();
+      this.scheduleAutoPassTimers();
+      this.scheduleBotActions();
+    } catch (err) {
+      this.log("ERROR in deflect handler:", err);
+    }
+  }
+
+  handleTakeCards(sessionId: string): void {
+    try {
+      if (this.state.currentPhase !== "defending") return;
+      const { attackStatus } = this.state;
+      if (sessionId !== attackStatus.defender.sessionId) return;
+
+      const defender = this.state.players.get(sessionId);
+      if (!defender) return;
+
+      this.log("takeCards: %s gives up, entering throwing-in", defender.name);
+      this.announce(`${defender.name} ${failedDefenceMessages[Math.floor(Math.random() * failedDefenceMessages.length)]}`);
+
+      this.state.currentPhase = "throwing-in";
+      this.state.passedPlayers.clear();
+      this.scheduleAutoPassTimers();
+      this.scheduleBotActions();
+    } catch (err) {
+      this.log("ERROR in takeCards handler:", err);
+    }
+  }
+
+  // ── Bot management ─────────────────────────────────────────────────
+
+  private botCounter = 0;
+
+  private addBot(name?: string): void {
+    this.botCounter++;
+    const sessionId = `bot_${this.botCounter}_${Math.random().toString(36).slice(2, 6)}`;
+    const player = new Player();
+    player.sessionId = sessionId;
+    player.name = name ?? `Bot ${this.botCounter}`;
+    player.isConnected = true;
+    player.isBot = true;
+    this.state.players.set(sessionId, player);
+    this.log("addBot: added %s (%s)", player.name, sessionId);
+  }
+
+  private removeBot(sessionId: string): void {
+    this.log("removeBot: removing %s", sessionId);
+    this.state.players.delete(sessionId);
+  }
+
+  private isBot(sessionId: string): boolean {
+    return this.state.players.get(sessionId)?.isBot === true;
+  }
+
+  scheduleBotActions(): void {
+    if (this.botTimer) {
+      this.botTimer.clear();
+      this.botTimer = null;
+    }
+
+    const delay = BOT_ACTION_DELAY_MS + Math.floor(Math.random() * BOT_ACTION_JITTER_MS);
+
+    this.botTimer = this.clock.setTimeout(() => {
+      this.botTimer = null;
+      this.executeBotAction();
+    }, delay);
+  }
+
+  private executeBotAction(): void {
+    const phase = this.state.currentPhase;
+    if (phase !== "attacking" && phase !== "defending" && phase !== "throwing-in") return;
+
+    const { attackStatus } = this.state;
+    const attackerId = attackStatus.attacker.sessionId;
+    const defenderId = attackStatus.defender.sessionId;
+
+    if (phase === "attacking" && this.isBot(attackerId)) {
+      const attacker = this.state.players.get(attackerId);
+      if (!attacker) return;
+      const action = BotAI.chooseAttack(attacker, this.state);
+      if (action) {
+        this.handleAttack(attackerId, action.suit, action.rank);
+      }
+      return;
+    }
+
+    if (phase === "defending" && this.isBot(defenderId)) {
+      const defender = this.state.players.get(defenderId);
+      if (!defender) return;
+      const action = BotAI.chooseDefense(defender, this.state, this);
+      if (action.type === "defend") {
+        this.handleDefend(defenderId, action.suit, action.rank, action.pairIndex);
+        this.scheduleBotActions();
+      } else if (action.type === "deflect") {
+        this.handleDeflect(defenderId, action.suit, action.rank);
+      } else {
+        this.handleTakeCards(defenderId);
+      }
+      return;
+    }
+
+    if (phase === "defending" || phase === "throwing-in") {
+      for (const id of this.state.turnOrder) {
+        if (!id || id === defenderId || !this.isBot(id)) continue;
+        if (this.state.passedPlayers.indexOf(id) !== -1) continue;
+
+        const bot = this.state.players.get(id);
+        if (!bot) continue;
+
+        if (phase === "throwing-in") {
+          const action = BotAI.chooseThrowIn(bot, this.state);
+          if (action) {
+            this.handleAddAttack(id, action.suit, action.rank);
+            return;
+          }
+        } else {
+          const action = BotAI.chooseAddAttack(bot, this.state);
+          if (action) {
+            this.handleAddAttack(id, action.suit, action.rank);
+            return;
+          }
+        }
+
+        this.handlePass(id);
+      }
+    }
   }
 
   isLegalDefense(defense: Card, attack: Card): boolean {
@@ -537,6 +693,7 @@ export class DurakRoom extends Room<GameState> {
 
   async onLeave(client: Client, consented: boolean) {
     const player = this.state.players.get(client.sessionId);
+    if (player?.isBot) return;
     if (player) player.isConnected = false;
 
     this.log("onLeave: %s (%s) left (consented=%s)", player?.name ?? "?", client.sessionId, consented);
@@ -858,6 +1015,7 @@ export class DurakRoom extends Room<GameState> {
     this.state.attackStatus.pairs.clear();
     this.state.passedPlayers.clear();
     this.state.currentPhase = "attacking";
+    this.scheduleBotActions();
   }
 
   getNextPlayerInTurnOrder(sessionId: string): Player | null {
@@ -918,6 +1076,9 @@ export class DurakRoom extends Room<GameState> {
   }
 
   onDispose() {
-    // optional cleanup
+    if (this.botTimer) {
+      this.botTimer.clear();
+      this.botTimer = null;
+    }
   }
 }

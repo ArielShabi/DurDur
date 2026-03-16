@@ -11,10 +11,19 @@ export function Lobby() {
   const playerCount = state.players?.size ?? 0;
   const isHost = room.sessionId === state.hostSessionId;
   const canStart = isHost && playerCount >= 2;
+  const canAddBot = isHost && playerCount < 6;
   const roomCode = state.roomCode;
 
   const handleStart = useCallback(() => {
     room.send("startGame");
+  }, [room]);
+
+  const handleAddBot = useCallback(() => {
+    room.send("addBot");
+  }, [room]);
+
+  const handleRemoveBot = useCallback((sessionId: string) => {
+    room.send("removeBot", { sessionId });
   }, [room]);
 
   const handleCopyCode = useCallback(async () => {
@@ -82,6 +91,20 @@ export function Lobby() {
                   you
                 </span>
               )}
+              {player.isBot && (
+                <span className="text-xs px-2 py-0.5 rounded bg-violet-500/20 text-violet-400">
+                  bot
+                </span>
+              )}
+              {isHost && player.isBot && (
+                <button
+                  type="button"
+                  onClick={() => handleRemoveBot(sessionId)}
+                  className="text-xs px-2 py-0.5 rounded bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors"
+                >
+                  remove
+                </button>
+              )}
             </li>
           ))}
           {playerCount === 0 && (
@@ -91,18 +114,29 @@ export function Lobby() {
       </div>
 
       {isHost && (
-        <button
-          type="button"
-          onClick={handleStart}
-          disabled={!canStart}
-          className={`w-full px-6 py-3 rounded-lg text-white font-semibold text-lg transition-colors ${
-            canStart
-              ? "bg-emerald-600 hover:bg-emerald-500"
-              : "bg-slate-700 text-slate-500 cursor-not-allowed"
-          }`}
-        >
-          {canStart ? "Start Game" : "Need at least 2 players"}
-        </button>
+        <div className="flex flex-col gap-3">
+          {canAddBot && (
+            <button
+              type="button"
+              onClick={handleAddBot}
+              className="w-full px-6 py-3 rounded-lg text-white font-semibold text-lg transition-colors bg-violet-600 hover:bg-violet-500"
+            >
+              Add Bot
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={handleStart}
+            disabled={!canStart}
+            className={`w-full px-6 py-3 rounded-lg text-white font-semibold text-lg transition-colors ${
+              canStart
+                ? "bg-emerald-600 hover:bg-emerald-500"
+                : "bg-slate-700 text-slate-500 cursor-not-allowed"
+            }`}
+          >
+            {canStart ? "Start Game" : "Need at least 2 players"}
+          </button>
+        </div>
       )}
     </section>
   );

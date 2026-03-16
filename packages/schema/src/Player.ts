@@ -8,4 +8,5 @@ export class Player extends Schema {
   @type([Card]) hand = new ArraySchema<Card>();
   @type("boolean") isPlaying: boolean = false;
   @type(["number"]) specialDeflectHistory = new ArraySchema<number>();
+  @type("boolean") isBot: boolean = false;
 }

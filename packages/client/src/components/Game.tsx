@@ -221,6 +221,7 @@ export function Game() {
         count={player.hand.length}
         label={player.name ?? "Anonymous"}
         role={role}
+        isBot={player.isBot}
       />
     );
   };
