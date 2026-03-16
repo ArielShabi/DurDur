@@ -29,7 +29,7 @@ function App() {
         <h1 className="text-3xl font-bold text-amber-400">
           DurDur.io
         </h1>
-        <p className="text-xs text-slate-500 mt-1">v0.1.2</p>
+        <p className="text-xs text-slate-500 mt-1">v0.2.0</p>
       </header>
 
       {connectionLost && (
